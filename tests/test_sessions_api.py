@@ -1,4 +1,5 @@
 from unittest import IsolatedAsyncioTestCase
+from unittest.mock import patch
 
 import httpx
 
@@ -120,46 +121,116 @@ class SessionApiTest(IsolatedAsyncioTestCase):
         self.assertEqual(body["question_limit"], 3)
         self.assertIn("question_text", body["current_prompt"])
 
+    async def test_session_status_reports_elapsed_remaining_seconds(self) -> None:
+        await self.configure_llm()
+        with patch(
+            "app.interview_engine.utc_now",
+            side_effect=[
+                "2026-03-10T00:00:00+00:00",
+                "2026-03-10T00:00:45+00:00",
+            ],
+        ):
+            created = await self.client.post(
+                "/sessions",
+                json={
+                    "role": "agent_engineer",
+                    "level": "mid",
+                    "duration_minutes": 10,
+                    "allow_followup": True,
+                },
+            )
+            session_id = created.json()["session_id"]
+            status = await self.client.get(f"/sessions/{session_id}")
+
+        self.assertEqual(status.status_code, 200)
+        self.assertEqual(status.json()["remaining_seconds"], 555)
+
     async def test_answer_with_missing_points_generates_followup_until_limit(self) -> None:
         await self.configure_llm()
-        created = await self.client.post(
-            "/sessions",
-            json={
-                "role": "agent_engineer",
-                "level": "mid",
-                "duration_minutes": 10,
-                "allow_followup": True,
-            },
-        )
-        session_id = created.json()["session_id"]
+        with patch(
+            "app.interview_engine.utc_now",
+            side_effect=[
+                "2026-03-10T00:00:00+00:00",
+                "2026-03-10T00:00:30+00:00",
+                "2026-03-10T00:00:30+00:00",
+                "2026-03-10T00:01:00+00:00",
+                "2026-03-10T00:01:00+00:00",
+                "2026-03-10T00:01:30+00:00",
+                "2026-03-10T00:01:30+00:00",
+            ],
+        ):
+            created = await self.client.post(
+                "/sessions",
+                json={
+                    "role": "agent_engineer",
+                    "level": "mid",
+                    "duration_minutes": 10,
+                    "allow_followup": True,
+                },
+            )
+            session_id = created.json()["session_id"]
 
-        first = await self.client.post(
-            f"/sessions/{session_id}/answer",
-            json={"answer": "Agent can use tools."},
-        )
+            first = await self.client.post(
+                f"/sessions/{session_id}/answer",
+                json={"answer": "Agent can use tools."},
+            )
+            second = await self.client.post(
+                f"/sessions/{session_id}/answer",
+                json={"answer": "It also reasons about what to do next."},
+            )
+
+            third = await self.client.post(
+                f"/sessions/{session_id}/answer",
+                json={"answer": "That is all I know."},
+            )
         self.assertEqual(first.status_code, 200)
         first_body = first.json()
         self.assertEqual(first_body["event"], "followup")
         self.assertEqual(first_body["followup_count"], 1)
+        self.assertEqual(first_body["remaining_seconds"], 570)
         self.assertIn("autonomous", first_body["evaluation"]["missing_points"])
 
-        second = await self.client.post(
-            f"/sessions/{session_id}/answer",
-            json={"answer": "It also reasons about what to do next."},
-        )
         self.assertEqual(second.status_code, 200)
         second_body = second.json()
         self.assertEqual(second_body["event"], "followup")
         self.assertEqual(second_body["followup_count"], 2)
 
-        third = await self.client.post(
-            f"/sessions/{session_id}/answer",
-            json={"answer": "That is all I know."},
-        )
         self.assertEqual(third.status_code, 200)
         third_body = third.json()
         self.assertEqual(third_body["event"], "next_question")
         self.assertEqual(third_body["question_index"], 1)
+
+    async def test_answer_after_time_limit_finishes_session(self) -> None:
+        await self.configure_llm()
+        with patch(
+            "app.interview_engine.utc_now",
+            side_effect=[
+                "2026-03-10T00:00:00+00:00",
+                "2026-03-10T00:10:05+00:00",
+                "2026-03-10T00:10:05+00:00",
+                "2026-03-10T00:10:05+00:00",
+                "2026-03-10T00:10:05+00:00",
+            ],
+        ):
+            created = await self.client.post(
+                "/sessions",
+                json={
+                    "role": "agent_engineer",
+                    "level": "mid",
+                    "duration_minutes": 10,
+                    "allow_followup": True,
+                },
+            )
+            session_id = created.json()["session_id"]
+
+            answered = await self.client.post(
+                f"/sessions/{session_id}/answer",
+                json={"answer": "An agent is autonomous and can use tools dynamically."},
+            )
+
+        self.assertEqual(answered.status_code, 200)
+        self.assertEqual(answered.json()["event"], "finished")
+        self.assertEqual(answered.json()["remaining_seconds"], 0)
 
     async def test_finishing_session_returns_structured_report(self) -> None:
         await self.configure_llm()

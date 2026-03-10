@@ -20,6 +20,12 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def seconds_since(started_at: str, current_time: str) -> int:
+    started = datetime.fromisoformat(started_at)
+    current = datetime.fromisoformat(current_time)
+    return max(0, int((current - started).total_seconds()))
+
+
 def normalize_text(text: str) -> str:
     return re.sub(r"[^a-z0-9\s]+", " ", text.lower())
 
@@ -87,6 +93,7 @@ class InterviewEngine:
 
     def get_session_status(self, session_id: str) -> Dict[str, Any]:
         session = self.database.get_session(session_id)
+        remaining_seconds = self._sync_remaining_seconds(session)
         current_prompt = None
         if session["status"] == "in_progress":
             current_prompt = self._build_current_prompt(session)
@@ -99,7 +106,7 @@ class InterviewEngine:
             "allow_followup": bool(session["allow_followup"]),
             "question_index": session["current_question_index"],
             "question_limit": session["question_limit"],
-            "remaining_seconds": session["remaining_seconds"],
+            "remaining_seconds": remaining_seconds,
             "current_prompt": current_prompt,
         }
 
@@ -107,6 +114,7 @@ class InterviewEngine:
         session = self.database.get_session(session_id)
         if session["status"] != "in_progress":
             raise ValueError("Session is not active")
+        remaining_seconds = self._sync_remaining_seconds(session)
         selected_question_ids = json.loads(session["selected_question_ids"])
         question_id = selected_question_ids[session["current_question_index"]]
         question = self.database.get_question(question_id)
@@ -143,9 +151,8 @@ class InterviewEngine:
             missing_points=evaluation.missing_points,
             summary=self._build_question_summary(question["question_text"], evaluation),
         )
-
-        remaining_seconds = max(0, session["remaining_seconds"] - 90)
-        self.database.update_session(session_id, remaining_seconds=remaining_seconds)
+        session = self.database.get_session(session_id)
+        remaining_seconds = self._sync_remaining_seconds(session)
 
         route = self.workflow.route_after_evaluation(
             {
@@ -227,6 +234,7 @@ class InterviewEngine:
 
     async def finish_session(self, session_id: str) -> Dict[str, Any]:
         session = self.database.get_session(session_id)
+        remaining_seconds = self._sync_remaining_seconds(session)
         llm_settings = self._require_llm_settings()
         question_records = self.database.list_question_records(session_id)
         question_summaries = [
@@ -259,7 +267,12 @@ class InterviewEngine:
             summary=report["summary"],
             question_summaries=question_summaries,
         )
-        self.database.update_session(session_id, status="completed", ended_at=utc_now())
+        self.database.update_session(
+            session_id,
+            status="completed",
+            ended_at=utc_now(),
+            remaining_seconds=remaining_seconds,
+        )
         return {
             "session_id": session_id,
             **report,
@@ -321,3 +334,14 @@ class InterviewEngine:
         if raw_settings is None:
             raise ValueError("LLM settings are not configured")
         return LLMSettings(**raw_settings)
+
+    def _sync_remaining_seconds(self, session: Any) -> int:
+        if session["status"] != "in_progress":
+            return session["remaining_seconds"]
+        remaining_seconds = max(
+            0,
+            session["duration_minutes"] * 60 - seconds_since(session["started_at"], utc_now()),
+        )
+        if remaining_seconds != session["remaining_seconds"]:
+            self.database.update_session(session["id"], remaining_seconds=remaining_seconds)
+        return remaining_seconds

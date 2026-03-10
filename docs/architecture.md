@@ -26,6 +26,7 @@ It also enables local development CORS for Vite on `127.0.0.1:5173` and `localho
 - maps duration to question count
 - creates sessions
 - evaluates answers
+- tracks remaining interview time from the session start timestamp
 - tracks cumulative scoring per question across follow-ups
 - decides whether to follow up, advance, or finish
 - produces the final report

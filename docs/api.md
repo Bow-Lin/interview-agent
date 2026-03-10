@@ -170,7 +170,7 @@ Behavioral notes:
 
 - evaluation is cumulative across all answers for the current question
 - follow-up count is capped at `2`
-- each submitted answer currently reduces `remaining_seconds` by `90`
+- `remaining_seconds` reflects real elapsed wall-clock time since the session started
 
 ### `POST /sessions/{session_id}/finish`
 

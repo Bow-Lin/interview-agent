@@ -8,3 +8,4 @@
 - Updated the docs to describe the real OpenAI-compatible provider flow, persisted LLM settings, and the settings-first startup experience.
 - Added a follow-up TODO for replacing plaintext API key storage with system credential stores.
 - Updated backend runtime and testing documentation to use `uv sync` and `uv run ...`, and checked in `uv.lock` for Python dependency locking.
+- Updated the timer documentation to reflect real wall-clock `remaining_seconds` tracking instead of the earlier fixed per-answer decrement.

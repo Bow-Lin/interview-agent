@@ -138,6 +138,7 @@ export default function App() {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [config, setConfig] = useState<InterviewConfig>(defaultConfig);
   const [session, setSession] = useState<SessionState | null>(null);
+  const [displayRemainingSeconds, setDisplayRemainingSeconds] = useState<number | null>(null);
   const [report, setReport] = useState<Report | null>(null);
   const [answer, setAnswer] = useState("");
   const [transcript, setTranscript] = useState<TranscriptTurn[]>([]);
@@ -158,6 +159,27 @@ export default function App() {
     void loadHistory();
     void loadLLMSettings();
   }, []);
+
+  useEffect(() => {
+    if (view !== "interview" || !session) {
+      setDisplayRemainingSeconds(null);
+      return;
+    }
+
+    setDisplayRemainingSeconds(session.remaining_seconds);
+    if (session.remaining_seconds <= 0) {
+      return;
+    }
+
+    const deadline = Date.now() + session.remaining_seconds * 1000;
+    const timerId = window.setInterval(() => {
+      setDisplayRemainingSeconds(Math.max(0, Math.ceil((deadline - Date.now()) / 1000)));
+    }, 1000);
+
+    return () => {
+      window.clearInterval(timerId);
+    };
+  }, [session, view]);
 
   const scoreLabel = useMemo(() => {
     if (!report) {
@@ -388,6 +410,7 @@ export default function App() {
     setView("home");
     setReport(null);
     setSession(null);
+    setDisplayRemainingSeconds(null);
     setAnswer("");
     setTranscript([]);
   }
@@ -569,7 +592,9 @@ export default function App() {
                 </p>
               </div>
               <div className="status-cluster">
-                <span className="timer-chip">{formatSeconds(session.remaining_seconds)}</span>
+                <span className="timer-chip">
+                  {formatSeconds(displayRemainingSeconds ?? session.remaining_seconds)}
+                </span>
                 <button className="ghost-button" disabled={busy} onClick={() => void finishInterview()}>
                   Finish now
                 </button>

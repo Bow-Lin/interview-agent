@@ -48,6 +48,7 @@ Current backend coverage includes:
 - session creation
 - follow-up generation
 - follow-up cap behavior
+- wall-clock remaining time behavior
 - structured report generation
 - cumulative scoring across follow-up turns
 - rejection of unsupported levels

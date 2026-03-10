@@ -1,10 +1,11 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { vi } from "vitest";
 
 import App from "./App";
 
 describe("App", () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -123,5 +124,88 @@ describe("App", () => {
     expect(screen.getByLabelText("Base URL")).toBeTruthy();
     expect(screen.getByLabelText("Model")).toBeTruthy();
     expect(screen.getByLabelText("API Key")).toBeTruthy();
+  });
+
+  it("updates the interview timer between prompts", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/history")) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              sessions: [],
+            }),
+          });
+        }
+
+        if (url.endsWith("/settings/llm")) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              configured: true,
+              provider: "openai_compatible",
+              base_url: "https://api.openai.com/v1",
+              model: "gpt-test",
+              api_key_set: true,
+            }),
+          });
+        }
+
+        if (url.endsWith("/sessions") && init?.method === "POST") {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              session_id: "session-1",
+              status: "in_progress",
+              question_index: 0,
+              question_limit: 3,
+              remaining_seconds: 600,
+              current_prompt: {
+                question_id: "q1",
+                question_text: "Tell me about your last project.",
+                prompt_type: "main_question",
+              },
+            }),
+          });
+        }
+
+        throw new Error(`Unhandled fetch request: ${url}`);
+      }),
+    );
+
+    render(<App />);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Start Mock Interview" }));
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Begin Interview" }));
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("10:00")).toBeTruthy();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+    });
+
+    expect(screen.getByText("09:59")).toBeTruthy();
+
+    await act(async () => {
+      vi.advanceTimersByTime(3000);
+    });
+
+    expect(screen.getByText("09:56")).toBeTruthy();
   });
 });
