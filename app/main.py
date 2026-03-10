@@ -3,17 +3,20 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import Database
 from app.interview_engine import InterviewEngine
+from app.llm import OpenAICompatibleLLMClient
 from app.schemas import (
     AnswerRequest,
     AnswerResponse,
     HistoryResponse,
+    LLMSettingsRequest,
+    LLMSettingsResponse,
     SessionCreateRequest,
     SessionCreateResponse,
     SessionStatusResponse,
 )
 
 
-def create_app(testing: bool = False) -> FastAPI:
+def create_app(testing: bool = False, llm_client=None) -> FastAPI:
     app = FastAPI(title="Interview Agent MVP")
     app.add_middleware(
         CORSMiddleware,
@@ -26,7 +29,54 @@ def create_app(testing: bool = False) -> FastAPI:
         allow_headers=["*"],
     )
     database = Database(":memory:" if testing else "interview_agent.db")
-    engine = InterviewEngine(database)
+    engine = InterviewEngine(database, llm_client=llm_client or OpenAICompatibleLLMClient())
+
+    @app.get("/settings/llm", response_model=LLMSettingsResponse)
+    async def get_llm_settings():
+        settings = database.get_llm_settings()
+        if settings is None:
+            return {
+                "configured": False,
+                "provider": None,
+                "base_url": None,
+                "model": None,
+                "api_key_set": False,
+            }
+        return {
+            "configured": True,
+            "provider": settings["provider"],
+            "base_url": settings["base_url"],
+            "model": settings["model"],
+            "api_key_set": bool(settings["api_key"]),
+        }
+
+    @app.put("/settings/llm", response_model=LLMSettingsResponse)
+    async def put_llm_settings(payload: LLMSettingsRequest):
+        existing = database.get_llm_settings()
+        base_url = payload.base_url.strip()
+        model = payload.model.strip()
+        if not base_url or not model:
+            raise HTTPException(status_code=400, detail="Base URL and model are required")
+        api_key = (
+            payload.api_key.strip()
+            if payload.api_key is not None and payload.api_key.strip()
+            else (existing["api_key"] if existing else "")
+        )
+        if not api_key:
+            raise HTTPException(status_code=400, detail="API key is required")
+        database.upsert_llm_settings(
+            provider=payload.provider,
+            base_url=base_url,
+            model=model,
+            api_key=api_key,
+        )
+        return {
+            "configured": True,
+            "provider": payload.provider,
+            "base_url": base_url,
+            "model": model,
+            "api_key_set": True,
+        }
 
     @app.post("/sessions", response_model=SessionCreateResponse, status_code=201)
     async def create_session(payload: SessionCreateRequest):
@@ -50,7 +100,7 @@ def create_app(testing: bool = False) -> FastAPI:
     @app.post("/sessions/{session_id}/answer", response_model=AnswerResponse)
     async def answer_session(session_id: str, payload: AnswerRequest):
         try:
-            return engine.answer(session_id, payload.answer)
+            return await engine.answer(session_id, payload.answer)
         except KeyError:
             raise HTTPException(status_code=404, detail="Session not found")
         except ValueError as exc:
@@ -59,7 +109,7 @@ def create_app(testing: bool = False) -> FastAPI:
     @app.post("/sessions/{session_id}/finish")
     async def finish_session(session_id: str):
         try:
-            return engine.finish_session(session_id)
+            return await engine.finish_session(session_id)
         except KeyError:
             raise HTTPException(status_code=404, detail="Session not found")
 

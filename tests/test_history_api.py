@@ -3,17 +3,27 @@ from unittest import IsolatedAsyncioTestCase
 import httpx
 
 from app.main import create_app
+from tests.test_sessions_api import StubLLMClient
 
 
 class HistoryApiTest(IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
-        transport = httpx.ASGITransport(app=create_app(testing=True))
+        transport = httpx.ASGITransport(app=create_app(testing=True, llm_client=StubLLMClient()))
         self.client = httpx.AsyncClient(transport=transport, base_url="http://test")
 
     async def asyncTearDown(self) -> None:
         await self.client.aclose()
 
     async def test_history_lists_completed_sessions(self) -> None:
+        await self.client.put(
+            "/settings/llm",
+            json={
+                "provider": "openai_compatible",
+                "base_url": "https://api.openai.com/v1",
+                "model": "test-model",
+                "api_key": "test-key",
+            },
+        )
         created = await self.client.post(
             "/sessions",
             json={

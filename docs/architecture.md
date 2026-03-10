@@ -15,6 +15,7 @@ The system runs as a local Web app rather than a desktop bundle.
 ### API Layer
 
 [`app/main.py`](/home/deming/work/awesome-interview-agent/app/main.py) creates the FastAPI application and exposes the session, answer, report, and history endpoints.
+It also exposes persisted LLM settings endpoints.
 It also enables local development CORS for Vite on `127.0.0.1:5173` and `localhost:5173`.
 
 ### Interview Engine
@@ -28,8 +29,8 @@ It also enables local development CORS for Vite on `127.0.0.1:5173` and `localho
 - decides whether to follow up, advance, or finish
 - produces the final report
 
-Current answer evaluation and report generation use `MockLLMClient`.
-This is deterministic logic based on keyword overlap, not a real model provider.
+Current answer evaluation, follow-up generation, and report generation use a real OpenAI-compatible provider client from [`app/llm.py`](/home/deming/work/awesome-interview-agent/app/llm.py).
+The engine refuses to start sessions unless LLM settings are configured.
 
 ### Workflow Seam
 
@@ -52,6 +53,9 @@ Persisted tables:
 - `question_records`
 - `turn_records`
 - `interview_reports`
+- `llm_settings`
+
+`llm_settings` currently stores `provider`, `base_url`, `model`, and `api_key` in plaintext.
 
 ## Frontend Components
 
@@ -63,18 +67,21 @@ Persisted tables:
 - `report`
 
 The frontend currently avoids a router dependency and switches views via local React state.
+LLM configuration is handled through a modal-style settings panel rather than a login flow.
 
 [`src/styles.css`](/home/deming/work/awesome-interview-agent/src/styles.css) contains the visual system and layout styling.
 
 ## Data Flow
 
-1. The frontend posts configuration to `POST /sessions`.
-2. The backend selects seeded questions for the requested role/level.
-3. Each answer is stored in `turn_records`.
-4. The engine evaluates the cumulative answer for the current question.
-5. The workflow decides whether to ask a follow-up, move to the next question, or finish.
-6. The final report is persisted and then returned to the frontend.
-7. History reads from completed sessions and stored reports.
+1. The frontend loads `/settings/llm` and `/history` on startup.
+2. If needed, the user saves provider configuration through `PUT /settings/llm`.
+3. The frontend posts interview configuration to `POST /sessions`.
+4. The backend selects seeded questions for the requested role/level.
+5. Each answer is stored in `turn_records`.
+6. The engine evaluates the cumulative answer for the current question through the OpenAI-compatible endpoint.
+7. The workflow decides whether to ask a follow-up, move to the next question, or finish.
+8. The final report is generated through the same provider, persisted, and returned to the frontend.
+9. History reads from completed sessions and stored reports.
 
 ## Important Current Constraints
 
@@ -82,3 +89,4 @@ The frontend currently avoids a router dependency and switches views via local R
 - Role/level combinations without enough questions are rejected instead of silently downgraded.
 - The frontend only exposes durations the current seed data can satisfy.
 - The backend already validates durations at the schema level to prevent unsupported values such as `15`.
+- The provider integration currently targets `POST /chat/completions` on an OpenAI-compatible base URL.

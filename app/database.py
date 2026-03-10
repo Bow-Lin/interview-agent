@@ -87,6 +87,13 @@ class Database:
                     summary TEXT NOT NULL,
                     question_summaries TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS llm_settings (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    provider TEXT NOT NULL,
+                    base_url TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    api_key TEXT NOT NULL
+                );
                 """
             )
             conn.executemany(
@@ -407,6 +414,41 @@ class Database:
             }
             for row in rows
         ]
+
+    def upsert_llm_settings(
+        self,
+        *,
+        provider: str,
+        base_url: str,
+        model: str,
+        api_key: str,
+    ) -> None:
+        with self.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO llm_settings (id, provider, base_url, model, api_key)
+                VALUES (1, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    provider = excluded.provider,
+                    base_url = excluded.base_url,
+                    model = excluded.model,
+                    api_key = excluded.api_key
+                """,
+                (provider, base_url, model, api_key),
+            )
+
+    def get_llm_settings(self) -> Optional[Dict[str, Any]]:
+        row = self._conn.execute(
+            "SELECT provider, base_url, model, api_key FROM llm_settings WHERE id = 1"
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "provider": row["provider"],
+            "base_url": row["base_url"],
+            "model": row["model"],
+            "api_key": row["api_key"],
+        }
 
     @staticmethod
     def _question_row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:

@@ -1,11 +1,11 @@
 import json
 import re
 import uuid
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
 from app.database import Database
+from app.llm import EvaluationResult, LLMClient, LLMSettings
 from app.workflow import InterviewWorkflow
 
 
@@ -35,97 +35,16 @@ def keyword_hits(answer: str, expected_points: Iterable[str]) -> Dict[str, bool]
     return point_hits
 
 
-@dataclass
-class EvaluationResult:
-    quality: str
-    score: int
-    missing_points: List[str]
-    strengths: List[str]
-    should_followup: bool
-    followup_focus: str
-
-    def as_dict(self) -> Dict[str, Any]:
-        return {
-            "quality": self.quality,
-            "score": self.score,
-            "missing_points": self.missing_points,
-            "strengths": self.strengths,
-            "should_followup": self.should_followup,
-            "followup_focus": self.followup_focus,
-        }
-
-
-class MockLLMClient:
-    def evaluate_answer(
-        self, answer: str, expected_points: List[str], followup_count: int, allow_followup: bool
-    ) -> EvaluationResult:
-        hits = keyword_hits(answer, expected_points)
-        strengths = [point for point, present in hits.items() if present]
-        missing_points = [point for point, present in hits.items() if not present]
-        ratio = len(strengths) / max(1, len(expected_points))
-        if ratio >= 1:
-            quality = "good"
-        elif ratio >= 0.5:
-            quality = "partial"
-        elif ratio > 0:
-            quality = "weak"
-        else:
-            quality = "off_topic"
-        score = int(50 + ratio * 50)
-        should_followup = allow_followup and bool(missing_points) and followup_count < 2
-        focus = missing_points[0] if missing_points else ""
-        return EvaluationResult(
-            quality=quality,
-            score=score,
-            missing_points=missing_points,
-            strengths=strengths,
-            should_followup=should_followup,
-            followup_focus=focus,
-        )
-
-    def generate_followup(self, question_text: str, missing_points: List[str]) -> str:
-        focus = missing_points[0] if missing_points else "the missing detail"
-        return (
-            f"You touched on the topic, but please go deeper on {focus}. "
-            f"How does that relate back to: {question_text}"
-        )
-
-    def generate_report(self, role: str, question_summaries: List[Dict[str, Any]]) -> Dict[str, Any]:
-        if question_summaries:
-            avg_score = sum(item["score"] for item in question_summaries) // len(question_summaries)
-        else:
-            avg_score = 0
-        strengths: List[str] = []
-        weaknesses: List[str] = []
-        for item in question_summaries:
-            strengths.extend(item["strengths"][:1])
-            weaknesses.extend(item["missing_points"][:1])
-        strengths = strengths[:3] or ["Kept the interview moving with direct answers."]
-        weaknesses = weaknesses[:3] or ["Needs more depth on edge cases."]
-        suggestions = [
-            f"Review {topic}" for topic in weaknesses[:2]
-        ] or ["Practice structured answer framing."]
-        return {
-            "total_score": avg_score,
-            "knowledge_score": min(100, avg_score + 4),
-            "communication_score": max(55, avg_score - 4),
-            "system_design_score": avg_score,
-            "strengths": strengths,
-            "weaknesses": weaknesses,
-            "suggestions": suggestions,
-            "summary": f"This {role} interview showed the strongest coverage on {strengths[0].lower()}."
-        }
-
-
 class InterviewEngine:
-    def __init__(self, database: Database, llm_client: Optional[MockLLMClient] = None) -> None:
+    def __init__(self, database: Database, llm_client: LLMClient) -> None:
         self.database = database
-        self.llm_client = llm_client or MockLLMClient()
+        self.llm_client = llm_client
         self.workflow = InterviewWorkflow()
 
     def create_session(
         self, role: str, level: str, duration_minutes: int, allow_followup: bool
     ) -> Dict[str, Any]:
+        self._require_llm_settings()
         question_limit = QUESTION_LIMITS[duration_minutes]
         questions = self.database.get_questions(role, level, question_limit)
         if len(questions) < question_limit:
@@ -184,7 +103,7 @@ class InterviewEngine:
             "current_prompt": current_prompt,
         }
 
-    def answer(self, session_id: str, answer: str) -> Dict[str, Any]:
+    async def answer(self, session_id: str, answer: str) -> Dict[str, Any]:
         session = self.database.get_session(session_id)
         if session["status"] != "in_progress":
             raise ValueError("Session is not active")
@@ -193,6 +112,7 @@ class InterviewEngine:
         question = self.database.get_question(question_id)
         question_record = self.database.get_question_record(session_id, question_id)
         followup_count = self.database.count_followups(question_record["id"])
+        llm_settings = self._require_llm_settings()
         prior_answers = [
             turn["content"]
             for turn in self.database.list_turns(question_record["id"])
@@ -200,7 +120,9 @@ class InterviewEngine:
         ]
         cumulative_answer = " ".join(prior_answers + [answer])
 
-        evaluation = self.llm_client.evaluate_answer(
+        evaluation = await self.llm_client.evaluate_answer(
+            settings=llm_settings,
+            question_text=question["question_text"],
             answer=cumulative_answer,
             expected_points=question["expected_points"],
             followup_count=followup_count,
@@ -235,8 +157,10 @@ class InterviewEngine:
         )
 
         if route == "generate_followup":
-            followup_text = self.llm_client.generate_followup(
-                question["question_text"], evaluation.missing_points
+            followup_text = await self.llm_client.generate_followup(
+                settings=llm_settings,
+                question_text=question["question_text"],
+                missing_points=evaluation.missing_points,
             )
             self.database.add_turn(
                 session_id,
@@ -262,7 +186,7 @@ class InterviewEngine:
 
         next_index = session["current_question_index"] + 1
         if route == "finalize_report":
-            report = self.finish_session(session_id)
+            report = await self.finish_session(session_id)
             return {
                 "event": "finished",
                 "session_id": session_id,
@@ -301,8 +225,9 @@ class InterviewEngine:
             },
         }
 
-    def finish_session(self, session_id: str) -> Dict[str, Any]:
+    async def finish_session(self, session_id: str) -> Dict[str, Any]:
         session = self.database.get_session(session_id)
+        llm_settings = self._require_llm_settings()
         question_records = self.database.list_question_records(session_id)
         question_summaries = [
             {
@@ -317,7 +242,11 @@ class InterviewEngine:
             }
             for record in question_records
         ]
-        report = self.llm_client.generate_report(session["role"], question_summaries)
+        report = await self.llm_client.generate_report(
+            settings=llm_settings,
+            role=session["role"],
+            question_summaries=question_summaries,
+        )
         self.database.save_report(
             session_id=session_id,
             total_score=report["total_score"],
@@ -386,3 +315,9 @@ class InterviewEngine:
                 + "."
             )
         return f"The answer to '{question_text}' needs more structure."
+
+    def _require_llm_settings(self) -> LLMSettings:
+        raw_settings = self.database.get_llm_settings()
+        if raw_settings is None:
+            raise ValueError("LLM settings are not configured")
+        return LLMSettings(**raw_settings)

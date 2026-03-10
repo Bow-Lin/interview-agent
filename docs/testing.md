@@ -37,6 +37,8 @@ npm run build
 
 Current backend coverage includes:
 
+- settings read and write behavior
+- rejection of session creation without configured LLM settings
 - session creation
 - follow-up generation
 - follow-up cap behavior
@@ -52,6 +54,7 @@ Current frontend coverage includes:
 - history fetch on startup
 - config flow defaulting to the supported `10` minute duration
 - hiding unsupported duration options from the user
+- opening the settings panel when no provider is configured
 
 ## Testing Strategy
 
@@ -63,6 +66,6 @@ Current frontend coverage includes:
 ## Known Gaps
 
 - No browser end-to-end test suite yet
-- No coverage for real external LLM providers
+- No live integration test against a real OpenAI-compatible endpoint
 - No persistence migration tests
 - No visual regression tests

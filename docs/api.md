@@ -8,6 +8,56 @@
 
 ## Endpoints
 
+### `GET /settings/llm`
+
+Return the currently stored LLM configuration without exposing the plaintext key.
+
+Success response:
+
+```json
+{
+  "configured": true,
+  "provider": "openai_compatible",
+  "base_url": "https://api.openai.com/v1",
+  "model": "gpt-4o-mini",
+  "api_key_set": true
+}
+```
+
+If no settings are stored:
+
+```json
+{
+  "configured": false,
+  "provider": null,
+  "base_url": null,
+  "model": null,
+  "api_key_set": false
+}
+```
+
+### `PUT /settings/llm`
+
+Create or update the local provider configuration.
+
+Request body:
+
+```json
+{
+  "provider": "openai_compatible",
+  "base_url": "https://api.openai.com/v1",
+  "model": "gpt-4o-mini",
+  "api_key": "sk-..."
+}
+```
+
+Behavior:
+
+- `provider` is currently fixed to `openai_compatible`
+- `base_url` and `model` must be non-empty after trimming
+- on first save, `api_key` is required
+- on later saves, an empty `api_key` keeps the previously stored key
+
 ### `POST /sessions`
 
 Create a new interview session.
@@ -27,6 +77,7 @@ Rules:
 
 - `duration_minutes` must be one of `10`, `20`, `30`
 - the requested `role + level` must have enough seeded questions
+- LLM settings must already be configured
 - unsupported combinations return `400`
 
 Success response: `201`
@@ -171,6 +222,7 @@ Success response:
 
 ## Error Semantics
 
+- `400` for missing LLM settings, unavailable `role + level`, or invalid LLM configuration payload after trimming
 - `400` for unsupported but syntactically valid requests such as unavailable `role + level`
 - `404` for unknown sessions or reports
 - `422` for schema validation failures such as unsupported duration values

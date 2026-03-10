@@ -4,6 +4,7 @@ type Role = "agent_engineer" | "backend_engineer" | "frontend_engineer" | "algor
 type Level = "junior" | "mid" | "senior";
 type PromptType = "main_question" | "followup";
 type View = "home" | "config" | "interview" | "report";
+type Provider = "openai_compatible";
 
 type HistoryItem = {
   session_id: string;
@@ -63,6 +64,21 @@ type InterviewConfig = {
   allow_followup: boolean;
 };
 
+type LLMSettingsState = {
+  configured: boolean;
+  provider: Provider;
+  base_url: string;
+  model: string;
+  api_key_set: boolean;
+};
+
+type LLMSettingsForm = {
+  provider: Provider;
+  base_url: string;
+  model: string;
+  api_key: string;
+};
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
 
 const defaultConfig: InterviewConfig = {
@@ -70,6 +86,13 @@ const defaultConfig: InterviewConfig = {
   level: "mid",
   duration_minutes: 10,
   allow_followup: true,
+};
+
+const defaultSettingsForm: LLMSettingsForm = {
+  provider: "openai_compatible",
+  base_url: "https://api.openai.com/v1",
+  model: "",
+  api_key: "",
 };
 
 function formatRole(value: string): string {
@@ -120,9 +143,20 @@ export default function App() {
   const [transcript, setTranscript] = useState<TranscriptTurn[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [pendingConfigRedirect, setPendingConfigRedirect] = useState(false);
+  const [llmSettings, setLlmSettings] = useState<LLMSettingsState>({
+    configured: false,
+    provider: "openai_compatible",
+    base_url: "",
+    model: "",
+    api_key_set: false,
+  });
+  const [settingsForm, setSettingsForm] = useState<LLMSettingsForm>(defaultSettingsForm);
 
   useEffect(() => {
     void loadHistory();
+    void loadLLMSettings();
   }, []);
 
   const scoreLabel = useMemo(() => {
@@ -141,7 +175,85 @@ export default function App() {
     }
   }
 
+  async function loadLLMSettings() {
+    try {
+      const payload = await apiRequest<{
+        configured: boolean;
+        provider: Provider | null;
+        base_url: string | null;
+        model: string | null;
+        api_key_set: boolean;
+      }>("/settings/llm");
+      const nextState: LLMSettingsState = {
+        configured: payload.configured,
+        provider: payload.provider ?? "openai_compatible",
+        base_url: payload.base_url ?? "",
+        model: payload.model ?? "",
+        api_key_set: payload.api_key_set,
+      };
+      setLlmSettings(nextState);
+      setSettingsForm({
+        provider: nextState.provider,
+        base_url: nextState.base_url || defaultSettingsForm.base_url,
+        model: nextState.model,
+        api_key: "",
+      });
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Failed to load LLM settings.");
+    }
+  }
+
+  function openSettings(options?: { redirectToConfig?: boolean }) {
+    setPendingConfigRedirect(Boolean(options?.redirectToConfig));
+    setSettingsOpen(true);
+    setError(null);
+  }
+
+  async function saveSettings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const payload = await apiRequest<{
+        configured: boolean;
+        provider: Provider;
+        base_url: string;
+        model: string;
+        api_key_set: boolean;
+      }>("/settings/llm", {
+        method: "PUT",
+        body: JSON.stringify(settingsForm),
+      });
+      const nextState: LLMSettingsState = {
+        configured: payload.configured,
+        provider: payload.provider,
+        base_url: payload.base_url,
+        model: payload.model,
+        api_key_set: payload.api_key_set,
+      };
+      setLlmSettings(nextState);
+      setSettingsForm((previous) => ({
+        ...previous,
+        api_key: "",
+      }));
+      setSettingsOpen(false);
+      if (pendingConfigRedirect) {
+        setView("config");
+        setPendingConfigRedirect(false);
+      }
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Failed to save LLM settings.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function createSession() {
+    if (!llmSettings.configured) {
+      openSettings();
+      setError("Configure your OpenAI-compatible provider before starting an interview.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -305,7 +417,16 @@ export default function App() {
                 Pick a target role, answer in text, and let the interviewer push on missing
                 points before generating a report.
               </p>
-              <button className="action-button" onClick={() => setView("config")}>
+              <button
+                className="action-button"
+                onClick={() => {
+                  if (!llmSettings.configured) {
+                    openSettings({ redirectToConfig: true });
+                    return;
+                  }
+                  setView("config");
+                }}
+              >
                 Start Mock Interview
               </button>
             </section>
@@ -313,9 +434,14 @@ export default function App() {
             <section className="card history-card">
               <div className="section-heading">
                 <h2>History</h2>
-                <button className="ghost-button" onClick={() => void loadHistory()}>
-                  Refresh
-                </button>
+                <div className="button-row">
+                  <button className="ghost-button" onClick={() => openSettings()}>
+                    LLM Settings
+                  </button>
+                  <button className="ghost-button" onClick={() => void loadHistory()}>
+                    Refresh
+                  </button>
+                </div>
               </div>
 
               {history.length === 0 ? (
@@ -421,9 +547,14 @@ export default function App() {
                 {config.duration_minutes} minute sessions will sample a fixed number of main
                 questions and can ask up to two follow-ups per question.
               </p>
-              <button className="action-button" disabled={busy} onClick={() => void createSession()}>
-                {busy ? "Creating..." : "Begin Interview"}
-              </button>
+              <div className="button-row">
+                <button className="ghost-button" onClick={() => openSettings()}>
+                  Edit LLM Settings
+                </button>
+                <button className="action-button" disabled={busy} onClick={() => void createSession()}>
+                  {busy ? "Creating..." : "Begin Interview"}
+                </button>
+              </div>
             </div>
           </section>
         ) : null}
@@ -569,6 +700,95 @@ export default function App() {
               </div>
             </section>
           </section>
+        ) : null}
+
+        {settingsOpen ? (
+          <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="llm-settings-title">
+            <section className="card modal-card">
+              <div className="section-heading">
+                <div>
+                  <h2 id="llm-settings-title">LLM Settings</h2>
+                  <p className="muted-copy">
+                    Configure an OpenAI-compatible endpoint for evaluation, follow-ups, and reports.
+                  </p>
+                </div>
+                <button className="ghost-button" onClick={() => setSettingsOpen(false)}>
+                  Close
+                </button>
+              </div>
+
+              <form className="form-grid settings-form" onSubmit={saveSettings}>
+                <label>
+                  <span>Provider</span>
+                  <select
+                    value={settingsForm.provider}
+                    onChange={(event) =>
+                      setSettingsForm((previous) => ({
+                        ...previous,
+                        provider: event.target.value as Provider,
+                      }))
+                    }
+                  >
+                    <option value="openai_compatible">OpenAI-Compatible</option>
+                  </select>
+                </label>
+
+                <label>
+                  <span>Base URL</span>
+                  <input
+                    value={settingsForm.base_url}
+                    onChange={(event) =>
+                      setSettingsForm((previous) => ({
+                        ...previous,
+                        base_url: event.target.value,
+                      }))
+                    }
+                    placeholder="https://api.openai.com/v1"
+                  />
+                </label>
+
+                <label>
+                  <span>Model</span>
+                  <input
+                    value={settingsForm.model}
+                    onChange={(event) =>
+                      setSettingsForm((previous) => ({
+                        ...previous,
+                        model: event.target.value,
+                      }))
+                    }
+                    placeholder="gpt-4o-mini"
+                  />
+                </label>
+
+                <label>
+                  <span>API Key</span>
+                  <input
+                    type="password"
+                    value={settingsForm.api_key}
+                    onChange={(event) =>
+                      setSettingsForm((previous) => ({
+                        ...previous,
+                        api_key: event.target.value,
+                      }))
+                    }
+                    placeholder={llmSettings.api_key_set ? "Leave blank to keep current key" : "sk-..."}
+                  />
+                </label>
+
+                <div className="settings-footer">
+                  <p className="muted-copy">
+                    {llmSettings.api_key_set
+                      ? "A key is already stored locally. Leave the field blank to keep it."
+                      : "The API key is stored locally by the backend in plaintext for this MVP."}
+                  </p>
+                  <button className="action-button" disabled={busy} type="submit">
+                    {busy ? "Saving..." : "Save Settings"}
+                  </button>
+                </div>
+              </form>
+            </section>
+          </div>
         ) : null}
       </main>
     </div>

@@ -3,6 +3,21 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 
 
+class LLMSettingsRequest(BaseModel):
+    provider: Literal["openai_compatible"]
+    base_url: str = Field(..., min_length=1)
+    model: str = Field(..., min_length=1)
+    api_key: Optional[str] = None
+
+
+class LLMSettingsResponse(BaseModel):
+    configured: bool
+    provider: Optional[str] = None
+    base_url: Optional[str] = None
+    model: Optional[str] = None
+    api_key_set: bool = False
+
+
 class SessionCreateRequest(BaseModel):
     role: str
     level: str

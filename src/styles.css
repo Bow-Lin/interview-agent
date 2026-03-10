@@ -227,12 +227,21 @@ button {
 }
 
 .form-grid select,
+.form-grid input,
 .answer-form textarea {
   padding: 14px 16px;
   border-radius: 18px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: rgba(3, 6, 10, 0.58);
   color: #f7f3e8;
+}
+
+.button-row,
+.settings-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .toggle-row {
@@ -357,6 +366,29 @@ button {
   color: #ffd5cf;
 }
 
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(6, 8, 10, 0.68);
+}
+
+.modal-card {
+  width: min(760px, 100%);
+}
+
+.settings-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.settings-footer {
+  grid-column: 1 / -1;
+  justify-content: space-between;
+}
+
 @media (max-width: 900px) {
   .card-grid,
   .report-columns,
@@ -369,7 +401,8 @@ button {
   .answer-actions,
   .status-cluster,
   .report-hero,
-  .section-heading {
+  .section-heading,
+  .settings-footer {
     align-items: flex-start;
     flex-direction: column;
   }
@@ -385,4 +418,3 @@ button {
     border-radius: 22px;
   }
 }
-
