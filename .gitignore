@@ -1,0 +1,13 @@
+node_modules/
+dist/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+interview_agent.db
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
