@@ -15,9 +15,11 @@ The system runs as a local Web app rather than a desktop bundle.
 
 ### API Layer
 
-[`app/main.py`](/home/deming/work/interview-agent/app/main.py) creates the FastAPI application and exposes the session, answer, report, and history endpoints.
-It also exposes persisted LLM settings endpoints.
+[`app/main.py`](/home/deming/work/interview-agent/app/main.py) creates the FastAPI application and exposes the session, answer, report, history, speech settings, and transcription endpoints.
 It also enables local development CORS for Vite on `127.0.0.1:5173` and `localhost:5173`.
+
+[`app/speech.py`](/home/deming/code/awesome-interview-agent/app/speech.py) provides the speech-transcription seam.
+Today it contains a Whisper-backed transcriber that loads models lazily and can be swapped for tests.
 
 ### Interview Engine
 
@@ -56,8 +58,10 @@ Persisted tables:
 - `turn_records`
 - `interview_reports`
 - `llm_settings`
+- `speech_settings`
 
 `llm_settings` currently stores `provider`, `base_url`, `model`, and `api_key` in plaintext.
+`speech_settings` stores the preferred speech mode (`browser` or `whisper`) and the selected Whisper model name.
 
 ## Frontend Components
 
@@ -70,20 +74,28 @@ Persisted tables:
 
 The frontend currently avoids a router dependency and switches views via local React state.
 LLM configuration is handled through a modal-style settings panel rather than a login flow.
+The interview view supports two speech paths:
+
+- browser-native speech recognition with Chinese or English selection
+- recorded audio upload to a backend Whisper transcription endpoint
+
+Both paths write the final transcript back into the existing answer textarea rather than bypassing the current answer submission flow.
 
 [`src/styles.css`](/home/deming/work/interview-agent/src/styles.css) contains the visual system and layout styling.
 
 ## Data Flow
 
-1. The frontend loads `/settings/llm` and `/history` on startup.
-2. If needed, the user saves provider configuration through `PUT /settings/llm`.
+1. The frontend loads `/settings/llm`, `/settings/speech`, and `/history` on startup.
+2. If needed, the user saves provider configuration through `PUT /settings/llm` and speech configuration through `PUT /settings/speech`.
 3. The frontend posts interview configuration to `POST /sessions`.
 4. The backend selects seeded questions for the requested role/level.
 5. Each answer is stored in `turn_records`.
-6. The engine evaluates the cumulative answer for the current question through the OpenAI-compatible endpoint.
-7. The workflow decides whether to ask a follow-up, move to the next question, or finish.
-8. The final report is generated through the same provider, persisted, and returned to the frontend.
-9. History reads from completed sessions and stored reports.
+6. In browser mode, speech is transcribed locally with the Web Speech API before submission.
+7. In Whisper mode, the frontend records audio, sends it to `POST /transcriptions`, and writes the returned text into the same answer box.
+8. The engine evaluates the cumulative answer for the current question through the OpenAI-compatible endpoint.
+9. The workflow decides whether to ask a follow-up, move to the next question, or finish.
+10. The final report is generated through the same provider, persisted, and returned to the frontend.
+11. History reads from completed sessions and stored reports.
 
 ## Important Current Constraints
 
@@ -92,3 +104,4 @@ LLM configuration is handled through a modal-style settings panel rather than a 
 - The frontend only exposes durations the current seed data can satisfy.
 - The backend already validates durations at the schema level to prevent unsupported values such as `15`.
 - The provider integration currently targets `POST /chat/completions` on an OpenAI-compatible base URL.
+- Whisper mode requires optional Python dependencies plus a local `ffmpeg` binary.

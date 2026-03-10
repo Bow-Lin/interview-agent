@@ -20,7 +20,10 @@ Implemented in the current repository:
 - FastAPI backend
 - local SQLite persistence
 - persisted OpenAI-compatible LLM settings
+- persisted speech input settings
 - question-bank-driven interviews
+- browser-based voice input for interview answers on supported desktop browsers
+- optional server-side Whisper transcription for recorded answers
 - real LLM-backed answer evaluation
 - real LLM-backed follow-up generation
 - final report generation
@@ -37,11 +40,14 @@ Out of scope in the current implementation:
 ## User Flow
 
 1. Open the home page and start a mock interview.
-2. If no provider is configured yet, open `LLM Settings` and save `base URL`, `model`, and `API key`.
+2. If no provider is configured yet, open `Settings` and save `base URL`, `model`, and `API key`.
 3. Configure role, level, duration, and follow-up behavior.
-4. Answer the active prompt in text.
-5. Receive either a follow-up, the next main question, or the final report.
-6. Review the report and revisit completed sessions from history.
+4. Choose browser speech recognition or server-side Whisper in `Settings`.
+5. Answer the active prompt in text or with optional voice input.
+6. Receive either a follow-up, the next main question, or the final report.
+7. Review the report and revisit completed sessions from history.
+
+Voice input is optional and fills the answer box before submission. Browser mode uses native speech recognition with Chinese or English selection. Whisper mode records audio in the browser and sends it to the backend for server-side transcription.
 
 ## Supported Roles and Limits
 
@@ -63,11 +69,13 @@ Current UI exposure is intentionally constrained to the working path:
 This project is intended to run locally:
 
 - backend setup: `uv sync`
+- optional Whisper speech dependencies: `uv sync --extra speech`
 - backend: `uv run uvicorn app.main:app --reload`
 - frontend: `npm run dev`
 
 The frontend talks to the backend over local HTTP at `http://127.0.0.1:8000` by default.
-Python dependencies are managed with `uv` from [`pyproject.toml`](/home/deming/code/awesome-interview-agent/pyproject.toml) and the checked-in `uv.lock`.
+Python dependencies are managed with `uv` from [`pyproject.toml`](/home/deming/code/awesome-interview-agent/pyproject.toml) and the checked-in `uv.lock`. Project-level `uv` configuration uses the Tsinghua PyPI mirror by default, while the Whisper extra resolves `torch` from the PyTorch CPU wheel index to avoid large CUDA downloads on machines that only need CPU transcription.
+Whisper mode also requires `ffmpeg` to be installed on the machine.
 
 ## LLM Configuration
 

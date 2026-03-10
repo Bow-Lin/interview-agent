@@ -94,6 +94,11 @@ class Database:
                     model TEXT NOT NULL,
                     api_key TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS speech_settings (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    mode TEXT NOT NULL DEFAULT 'browser',
+                    whisper_model TEXT NOT NULL DEFAULT 'small'
+                );
                 """
             )
             conn.executemany(
@@ -110,6 +115,12 @@ class Database:
                     }
                     for row in QUESTION_BANK
                 ],
+            )
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO speech_settings (id, mode, whisper_model)
+                VALUES (1, 'browser', 'small')
+                """
             )
 
     def create_session(
@@ -448,6 +459,33 @@ class Database:
             "base_url": row["base_url"],
             "model": row["model"],
             "api_key": row["api_key"],
+        }
+
+    def upsert_speech_settings(self, *, mode: str, whisper_model: str) -> None:
+        with self.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO speech_settings (id, mode, whisper_model)
+                VALUES (1, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    mode = excluded.mode,
+                    whisper_model = excluded.whisper_model
+                """,
+                (mode, whisper_model),
+            )
+
+    def get_speech_settings(self) -> Dict[str, Any]:
+        row = self._conn.execute(
+            "SELECT mode, whisper_model FROM speech_settings WHERE id = 1"
+        ).fetchone()
+        if row is None:
+            return {
+                "mode": "browser",
+                "whisper_model": "small",
+            }
+        return {
+            "mode": row["mode"],
+            "whisper_model": row["whisper_model"],
         }
 
     @staticmethod

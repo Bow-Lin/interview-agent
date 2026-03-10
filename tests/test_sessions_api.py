@@ -53,9 +53,31 @@ class StubLLMClient:
         }
 
 
+class StubSpeechTranscriber:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def transcribe(self, *, audio_path, model_name: str, language_hint=None) -> str:
+        self.calls.append(
+            {
+                "audio_path": str(audio_path),
+                "model_name": model_name,
+                "language_hint": language_hint,
+            }
+        )
+        return "transcribed answer"
+
+
 class SessionApiTest(IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
-        transport = httpx.ASGITransport(app=create_app(testing=True, llm_client=StubLLMClient()))
+        self.speech_transcriber = StubSpeechTranscriber()
+        transport = httpx.ASGITransport(
+            app=create_app(
+                testing=True,
+                llm_client=StubLLMClient(),
+                speech_transcriber=self.speech_transcriber,
+            )
+        )
         self.client = httpx.AsyncClient(transport=transport, base_url="http://test")
 
     async def asyncTearDown(self) -> None:
@@ -87,6 +109,80 @@ class SessionApiTest(IsolatedAsyncioTestCase):
                 "api_key_set": False,
             },
         )
+
+    async def test_speech_settings_default_to_browser(self) -> None:
+        response = await self.client.get("/settings/speech")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "mode": "browser",
+                "whisper_model": "small",
+            },
+        )
+
+    async def test_put_speech_settings_persists_selection(self) -> None:
+        response = await self.client.put(
+            "/settings/speech",
+            json={
+                "mode": "whisper",
+                "whisper_model": "small",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {
+                "mode": "whisper",
+                "whisper_model": "small",
+            },
+        )
+        loaded = await self.client.get("/settings/speech")
+        self.assertEqual(loaded.json()["mode"], "whisper")
+        self.assertEqual(loaded.json()["whisper_model"], "small")
+
+    async def test_put_speech_settings_rejects_blank_whisper_model(self) -> None:
+        response = await self.client.put(
+            "/settings/speech",
+            json={
+                "mode": "whisper",
+                "whisper_model": "   ",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "Whisper model is required")
+
+    async def test_transcription_requires_whisper_mode(self) -> None:
+        response = await self.client.post(
+            "/transcriptions",
+            files={"file": ("answer.webm", b"audio-bytes", "audio/webm")},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Speech mode", response.json()["detail"])
+
+    async def test_transcription_uses_configured_whisper_model(self) -> None:
+        await self.client.put(
+            "/settings/speech",
+            json={
+                "mode": "whisper",
+                "whisper_model": "small",
+            },
+        )
+
+        response = await self.client.post(
+            "/transcriptions",
+            data={"language_hint": "en"},
+            files={"file": ("answer.webm", b"audio-bytes", "audio/webm")},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"text": "transcribed answer"})
+        self.assertEqual(self.speech_transcriber.calls[0]["model_name"], "small")
+        self.assertEqual(self.speech_transcriber.calls[0]["language_hint"], "en")
 
     async def test_create_session_requires_llm_settings(self) -> None:
         response = await self.client.post(

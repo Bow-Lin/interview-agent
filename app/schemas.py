@@ -18,6 +18,20 @@ class LLMSettingsResponse(BaseModel):
     api_key_set: bool = False
 
 
+class SpeechSettingsRequest(BaseModel):
+    mode: Literal["browser", "whisper"]
+    whisper_model: str = Field(..., min_length=1)
+
+
+class SpeechSettingsResponse(BaseModel):
+    mode: Literal["browser", "whisper"]
+    whisper_model: str
+
+
+class TranscriptionResponse(BaseModel):
+    text: str
+
+
 class SessionCreateRequest(BaseModel):
     role: str
     level: str

@@ -58,6 +58,38 @@ Behavior:
 - on first save, `api_key` is required
 - on later saves, an empty `api_key` keeps the previously stored key
 
+### `GET /settings/speech`
+
+Return the current speech-input configuration.
+
+Success response:
+
+```json
+{
+  "mode": "browser",
+  "whisper_model": "small"
+}
+```
+
+### `PUT /settings/speech`
+
+Create or update the local speech-input configuration.
+
+Request body:
+
+```json
+{
+  "mode": "whisper",
+  "whisper_model": "small"
+}
+```
+
+Behavior:
+
+- `mode` must be `browser` or `whisper`
+- `whisper_model` must be non-empty
+- `whisper_model` is persisted even when the current mode is `browser`
+
 ### `POST /sessions`
 
 Create a new interview session.
@@ -172,6 +204,30 @@ Behavioral notes:
 - follow-up count is capped at `2`
 - `remaining_seconds` reflects real elapsed wall-clock time since the session started
 
+### `POST /transcriptions`
+
+Upload one recorded audio clip for server-side Whisper transcription.
+
+Request body:
+
+- `file`: multipart audio upload
+- `language_hint`: optional multipart form field such as `zh` or `en`
+
+Success response:
+
+```json
+{
+  "text": "Transcribed answer text"
+}
+```
+
+Behavioral notes:
+
+- the backend only accepts this endpoint when `mode` is set to `whisper`
+- the selected Whisper model comes from persisted speech settings
+- browser-mode speech recognition does not use this endpoint
+- Whisper mode requires optional speech dependencies and local `ffmpeg`
+
 ### `POST /sessions/{session_id}/finish`
 
 Force-complete the current session and generate a report immediately.
@@ -225,4 +281,5 @@ Success response:
 - `400` for missing LLM settings, unavailable `role + level`, or invalid LLM configuration payload after trimming
 - `400` for unsupported but syntactically valid requests such as unavailable `role + level`
 - `404` for unknown sessions or reports
+- `503` for transcription requests when Whisper is not installed or the local runtime is missing required system dependencies such as `ffmpeg`
 - `422` for schema validation failures such as unsupported duration values

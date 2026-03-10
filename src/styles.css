@@ -244,6 +244,79 @@ button {
   flex-wrap: wrap;
 }
 
+.voice-input-panel {
+  display: grid;
+  gap: 12px;
+  padding: 16px 18px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.voice-input-header,
+.voice-input-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.voice-language-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.settings-section-title {
+  grid-column: 1 / -1;
+  padding-top: 6px;
+  color: #f2b987;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 0.82rem;
+}
+
+.voice-input-header p,
+.voice-preview {
+  margin: 4px 0 0;
+}
+
+.voice-status-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 0.85rem;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(247, 243, 232, 0.85);
+}
+
+.voice-status-chip.listening {
+  background: rgba(121, 194, 176, 0.2);
+  color: #9de0d1;
+}
+
+.voice-status-chip.stopping {
+  background: rgba(242, 185, 135, 0.2);
+  color: #ffd39f;
+}
+
+.voice-status-chip.error,
+.voice-status-chip.unsupported {
+  background: rgba(171, 70, 70, 0.22);
+  color: #ffd5cf;
+}
+
+.voice-language-button.active {
+  background: rgba(243, 200, 137, 0.18);
+  color: #ffd39f;
+}
+
+.voice-preview span {
+  color: #f7f3e8;
+}
+
 .toggle-row {
   align-self: end;
   display: flex;
@@ -402,7 +475,10 @@ button {
   .status-cluster,
   .report-hero,
   .section-heading,
-  .settings-footer {
+  .settings-footer,
+  .voice-language-row,
+  .voice-input-header,
+  .voice-input-meta {
     align-items: flex-start;
     flex-direction: column;
   }

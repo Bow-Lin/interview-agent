@@ -1,4 +1,9 @@
-from fastapi import FastAPI, HTTPException
+import os
+import tempfile
+from pathlib import Path
+from typing import Optional
+
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import Database
@@ -10,13 +15,17 @@ from app.schemas import (
     HistoryResponse,
     LLMSettingsRequest,
     LLMSettingsResponse,
+    SpeechSettingsRequest,
+    SpeechSettingsResponse,
     SessionCreateRequest,
     SessionCreateResponse,
     SessionStatusResponse,
+    TranscriptionResponse,
 )
+from app.speech import SpeechTranscriptionUnavailable, WhisperSpeechTranscriber
 
 
-def create_app(testing: bool = False, llm_client=None) -> FastAPI:
+def create_app(testing: bool = False, llm_client=None, speech_transcriber=None) -> FastAPI:
     app = FastAPI(title="Interview Agent MVP")
     app.add_middleware(
         CORSMiddleware,
@@ -30,6 +39,7 @@ def create_app(testing: bool = False, llm_client=None) -> FastAPI:
     )
     database = Database(":memory:" if testing else "interview_agent.db")
     engine = InterviewEngine(database, llm_client=llm_client or OpenAICompatibleLLMClient())
+    transcriber = speech_transcriber or WhisperSpeechTranscriber()
 
     @app.get("/settings/llm", response_model=LLMSettingsResponse)
     async def get_llm_settings():
@@ -78,6 +88,24 @@ def create_app(testing: bool = False, llm_client=None) -> FastAPI:
             "api_key_set": True,
         }
 
+    @app.get("/settings/speech", response_model=SpeechSettingsResponse)
+    async def get_speech_settings():
+        return database.get_speech_settings()
+
+    @app.put("/settings/speech", response_model=SpeechSettingsResponse)
+    async def put_speech_settings(payload: SpeechSettingsRequest):
+        whisper_model = payload.whisper_model.strip()
+        if not whisper_model:
+            raise HTTPException(status_code=400, detail="Whisper model is required")
+        database.upsert_speech_settings(
+            mode=payload.mode,
+            whisper_model=whisper_model,
+        )
+        return {
+            "mode": payload.mode,
+            "whisper_model": whisper_model,
+        }
+
     @app.post("/sessions", response_model=SessionCreateResponse, status_code=201)
     async def create_session(payload: SessionCreateRequest):
         try:
@@ -123,6 +151,38 @@ def create_app(testing: bool = False, llm_client=None) -> FastAPI:
     @app.get("/history", response_model=HistoryResponse)
     async def history():
         return {"sessions": engine.list_history()}
+
+    @app.post("/transcriptions", response_model=TranscriptionResponse)
+    async def transcribe_audio(
+        file: UploadFile = File(...),
+        language_hint: Optional[str] = Form(default=None),
+    ):
+        speech_settings = database.get_speech_settings()
+        if speech_settings["mode"] != "whisper":
+            raise HTTPException(
+                status_code=400,
+                detail="Speech mode must be set to whisper before using server transcription.",
+            )
+
+        suffix = Path(file.filename or "recording.webm").suffix or ".webm"
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_file:
+                temp_file.write(await file.read())
+                temp_path = Path(temp_file.name)
+            text = transcriber.transcribe(
+                audio_path=temp_path,
+                model_name=speech_settings["whisper_model"],
+                language_hint=language_hint.strip() if language_hint else None,
+            )
+        except SpeechTranscriptionUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+        finally:
+            await file.close()
+            if temp_path and temp_path.exists():
+                os.unlink(temp_path)
+
+        return {"text": text}
 
     return app
 

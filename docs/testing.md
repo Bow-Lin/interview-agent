@@ -27,6 +27,15 @@ Backend dependency sync:
 uv sync
 ```
 
+Backend dependency sync with Whisper support:
+
+```bash
+uv sync --extra speech
+```
+
+The Whisper extra resolves `torch` from the PyTorch CPU wheel index by default, so local installs do not pull CUDA wheels unless you explicitly change the source configuration.
+Other Python packages resolve through the Tsinghua PyPI mirror configured in the project `pyproject.toml`.
+
 Frontend tests:
 
 ```bash
@@ -54,6 +63,8 @@ Current backend coverage includes:
 - rejection of unsupported levels
 - validation failure for unsupported durations
 - history listing for completed sessions
+- speech settings persistence
+- transcription endpoint behavior in browser and whisper modes
 
 Current frontend coverage includes:
 
@@ -62,6 +73,11 @@ Current frontend coverage includes:
 - config flow defaulting to the supported `10` minute duration
 - hiding unsupported duration options from the user
 - opening the settings panel when no provider is configured
+- live countdown updates during the interview
+- voice input fallback on unsupported browsers
+- voice transcript merge behavior on supported browsers
+- voice language switching between Chinese and English
+- Whisper-mode recording and transcript insertion
 
 ## Testing Strategy
 
