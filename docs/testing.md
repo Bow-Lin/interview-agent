@@ -18,7 +18,13 @@ Frontend:
 Backend full suite:
 
 ```bash
-python3 -m unittest discover -s tests -p 'test_*.py'
+uv run python -m unittest discover -s tests -p 'test_*.py'
+```
+
+Backend dependency sync:
+
+```bash
+uv sync
 ```
 
 Frontend tests:

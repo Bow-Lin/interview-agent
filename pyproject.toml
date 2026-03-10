@@ -1,5 +1,5 @@
 [project]
-name = "awesome-interview-agent"
+name = "interview-agent"
 version = "0.1.0"
 description = "Web MVP for a local single-user AI interview simulator"
 requires-python = ">=3.8"

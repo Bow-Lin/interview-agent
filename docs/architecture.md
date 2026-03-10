@@ -4,9 +4,10 @@
 
 The application is split into a small local frontend and backend:
 
-- React frontend in [`src/`](/home/deming/work/awesome-interview-agent/src)
-- FastAPI backend in [`app/`](/home/deming/work/awesome-interview-agent/app)
+- React frontend in [`src/`](/home/deming/work/interview-agent/src)
+- FastAPI backend in [`app/`](/home/deming/work/interview-agent/app)
 - SQLite database file `interview_agent.db` for local persistence
+- Python dependency and environment management through `uv` using [`pyproject.toml`](/home/deming/code/awesome-interview-agent/pyproject.toml) and `uv.lock`
 
 The system runs as a local Web app rather than a desktop bundle.
 
@@ -14,13 +15,13 @@ The system runs as a local Web app rather than a desktop bundle.
 
 ### API Layer
 
-[`app/main.py`](/home/deming/work/awesome-interview-agent/app/main.py) creates the FastAPI application and exposes the session, answer, report, and history endpoints.
+[`app/main.py`](/home/deming/work/interview-agent/app/main.py) creates the FastAPI application and exposes the session, answer, report, and history endpoints.
 It also exposes persisted LLM settings endpoints.
 It also enables local development CORS for Vite on `127.0.0.1:5173` and `localhost:5173`.
 
 ### Interview Engine
 
-[`app/interview_engine.py`](/home/deming/work/awesome-interview-agent/app/interview_engine.py) owns interview progression:
+[`app/interview_engine.py`](/home/deming/work/interview-agent/app/interview_engine.py) owns interview progression:
 
 - maps duration to question count
 - creates sessions
@@ -29,12 +30,12 @@ It also enables local development CORS for Vite on `127.0.0.1:5173` and `localho
 - decides whether to follow up, advance, or finish
 - produces the final report
 
-Current answer evaluation, follow-up generation, and report generation use a real OpenAI-compatible provider client from [`app/llm.py`](/home/deming/work/awesome-interview-agent/app/llm.py).
+Current answer evaluation, follow-up generation, and report generation use a real OpenAI-compatible provider client from [`app/llm.py`](/home/deming/work/interview-agent/app/llm.py).
 The engine refuses to start sessions unless LLM settings are configured.
 
 ### Workflow Seam
 
-[`app/workflow.py`](/home/deming/work/awesome-interview-agent/app/workflow.py) provides a graph-style routing seam.
+[`app/workflow.py`](/home/deming/work/interview-agent/app/workflow.py) provides a graph-style routing seam.
 If `langgraph` is installed later, this file is the intended integration point.
 Today it falls back to a local router with these states:
 
@@ -44,7 +45,7 @@ Today it falls back to a local router with these states:
 
 ### Persistence Layer
 
-[`app/database.py`](/home/deming/work/awesome-interview-agent/app/database.py) manages SQLite schema creation and all reads/writes.
+[`app/database.py`](/home/deming/work/interview-agent/app/database.py) manages SQLite schema creation and all reads/writes.
 
 Persisted tables:
 
@@ -59,7 +60,7 @@ Persisted tables:
 
 ## Frontend Components
 
-[`src/App.tsx`](/home/deming/work/awesome-interview-agent/src/App.tsx) is a single-page React application with four view states:
+[`src/App.tsx`](/home/deming/work/interview-agent/src/App.tsx) is a single-page React application with four view states:
 
 - `home`
 - `config`
@@ -69,7 +70,7 @@ Persisted tables:
 The frontend currently avoids a router dependency and switches views via local React state.
 LLM configuration is handled through a modal-style settings panel rather than a login flow.
 
-[`src/styles.css`](/home/deming/work/awesome-interview-agent/src/styles.css) contains the visual system and layout styling.
+[`src/styles.css`](/home/deming/work/interview-agent/src/styles.css) contains the visual system and layout styling.
 
 ## Data Flow
 
@@ -85,7 +86,7 @@ LLM configuration is handled through a modal-style settings panel rather than a 
 
 ## Important Current Constraints
 
-- The question bank is seeded in code from [`app/data.py`](/home/deming/work/awesome-interview-agent/app/data.py).
+- The question bank is seeded in code from [`app/data.py`](/home/deming/work/interview-agent/app/data.py).
 - Role/level combinations without enough questions are rejected instead of silently downgraded.
 - The frontend only exposes durations the current seed data can satisfy.
 - The backend already validates durations at the schema level to prevent unsupported values such as `15`.

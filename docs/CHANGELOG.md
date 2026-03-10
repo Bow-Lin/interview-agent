@@ -7,3 +7,4 @@
 - Recorded current behavioral constraints, including local-only runtime, deterministic evaluation, supported role and level combinations, and the frontend restriction to `10` minute sessions.
 - Updated the docs to describe the real OpenAI-compatible provider flow, persisted LLM settings, and the settings-first startup experience.
 - Added a follow-up TODO for replacing plaintext API key storage with system credential stores.
+- Updated backend runtime and testing documentation to use `uv sync` and `uv run ...`, and checked in `uv.lock` for Python dependency locking.

@@ -10,11 +10,11 @@
 ## Backend Conventions
 
 - Keep FastAPI endpoint functions thin; business logic belongs in the interview engine or persistence layer.
-- Keep SQLite access centralized in [`app/database.py`](/home/deming/work/awesome-interview-agent/app/database.py).
+- Keep SQLite access centralized in [`app/database.py`](/home/deming/work/interview-agent/app/database.py).
 - Maintain strict request validation in Pydantic schemas before values reach the engine.
 - Reject unsupported combinations explicitly; do not silently downgrade user intent.
 - Treat per-question evaluation as cumulative across follow-up turns.
-- Preserve the workflow seam in [`app/workflow.py`](/home/deming/work/awesome-interview-agent/app/workflow.py) even while the project uses the local fallback router.
+- Preserve the workflow seam in [`app/workflow.py`](/home/deming/work/interview-agent/app/workflow.py) even while the project uses the local fallback router.
 
 ## Frontend Conventions
 

@@ -62,10 +62,12 @@ Current UI exposure is intentionally constrained to the working path:
 
 This project is intended to run locally:
 
-- backend: `uvicorn app.main:app --reload`
+- backend setup: `uv sync`
+- backend: `uv run uvicorn app.main:app --reload`
 - frontend: `npm run dev`
 
 The frontend talks to the backend over local HTTP at `http://127.0.0.1:8000` by default.
+Python dependencies are managed with `uv` from [`pyproject.toml`](/home/deming/code/awesome-interview-agent/pyproject.toml) and the checked-in `uv.lock`.
 
 ## LLM Configuration
 
@@ -79,4 +81,4 @@ Required user-provided settings:
 - `api_key`
 
 Settings are stored locally by the backend in plaintext for now.
-Replacing this with a system credential store is tracked in [`docs/TODO.md`](/home/deming/work/awesome-interview-agent/docs/TODO.md).
+Replacing this with a system credential store is tracked in [`docs/TODO.md`](/home/deming/work/interview-agent/docs/TODO.md).

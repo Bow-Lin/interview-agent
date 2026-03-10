@@ -1,12 +1,13 @@
 {
-  "name": "awesome-interview-agent-web",
+  "name": "interview-agent-web",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "test": "vitest run"
+    "postinstall": "bash ./scripts/fix-node-bin-permissions.sh",
+    "dev": "node ./node_modules/vite/bin/vite.js",
+    "build": "node ./node_modules/vite/bin/vite.js build",
+    "test": "node ./node_modules/vitest/vitest.mjs run"
   },
   "dependencies": {
     "react": "^18.3.1",
