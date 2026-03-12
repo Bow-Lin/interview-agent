@@ -8,6 +8,7 @@ type Provider = "openai_compatible";
 type VoiceInputStatus = "unsupported" | "idle" | "listening" | "stopping" | "error";
 type SpeechInputMode = "browser" | "whisper";
 type VoiceInputLanguage = "zh-CN" | "en-US";
+type QuestionSetSourceType = "system" | "upload";
 
 type HistoryItem = {
   session_id: string;
@@ -61,10 +62,19 @@ type TranscriptTurn = {
 };
 
 type InterviewConfig = {
+  question_set_id: string;
   role: Role;
   level: Level;
   duration_minutes: 10;
   allow_followup: boolean;
+};
+
+type QuestionSetSummary = {
+  id: string;
+  name: string;
+  source_type: QuestionSetSourceType;
+  status: string;
+  question_count: number;
 };
 
 type LLMSettingsState = {
@@ -138,8 +148,10 @@ declare global {
 }
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000";
+const BUILT_IN_QUESTION_SET_ID = "built_in_default";
 
 const defaultConfig: InterviewConfig = {
+  question_set_id: BUILT_IN_QUESTION_SET_ID,
   role: "agent_engineer",
   level: "mid",
   duration_minutes: 10,
@@ -252,11 +264,14 @@ function getVoiceInputMessage(
 }
 
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const isFormData = init?.body instanceof FormData;
   const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
+    headers: isFormData
+      ? init?.headers
+      : {
+          "Content-Type": "application/json",
+          ...(init?.headers ?? {}),
+        },
     ...init,
   });
 
@@ -271,6 +286,7 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
 export default function App() {
   const [view, setView] = useState<View>("home");
   const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [questionSets, setQuestionSets] = useState<QuestionSetSummary[]>([]);
   const [config, setConfig] = useState<InterviewConfig>(defaultConfig);
   const [session, setSession] = useState<SessionState | null>(null);
   const [displayRemainingSeconds, setDisplayRemainingSeconds] = useState<number | null>(null);
@@ -290,6 +306,8 @@ export default function App() {
   );
   const [interimTranscript, setInterimTranscript] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [questionBankUploadOpen, setQuestionBankUploadOpen] = useState(false);
+  const [questionBankFile, setQuestionBankFile] = useState<File | null>(null);
   const [pendingConfigRedirect, setPendingConfigRedirect] = useState(false);
   const [llmSettings, setLlmSettings] = useState<LLMSettingsState>({
     configured: false,
@@ -312,6 +330,7 @@ export default function App() {
 
   useEffect(() => {
     void loadHistory();
+    void loadQuestionSets();
     void loadLLMSettings();
     void loadSpeechSettings();
   }, []);
@@ -387,6 +406,24 @@ export default function App() {
     }
   }
 
+  async function loadQuestionSets() {
+    try {
+      const payload = await apiRequest<{ question_sets: QuestionSetSummary[] }>("/question-sets");
+      setQuestionSets(payload.question_sets);
+      setConfig((previous) => {
+        const stillExists = payload.question_sets.some((questionSet) => questionSet.id === previous.question_set_id);
+        return {
+          ...previous,
+          question_set_id: stillExists
+            ? previous.question_set_id
+            : payload.question_sets[0]?.id ?? BUILT_IN_QUESTION_SET_ID,
+        };
+      });
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Failed to load question banks.");
+    }
+  }
+
   async function loadLLMSettings() {
     try {
       const payload = await apiRequest<{
@@ -422,6 +459,37 @@ export default function App() {
       setSpeechSettingsForm(payload);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load speech settings.");
+    }
+  }
+
+  async function uploadQuestionBank() {
+    if (!questionBankFile) {
+      setError("Choose a JSON question bank file before importing.");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", questionBankFile);
+      const imported = await apiRequest<QuestionSetSummary>("/question-sets/import", {
+        method: "POST",
+        body: formData,
+      });
+      await loadQuestionSets();
+      setConfig((previous) => ({
+        ...previous,
+        question_set_id: imported.id,
+      }));
+      setQuestionBankFile(null);
+      setQuestionBankUploadOpen(false);
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error ? requestError.message : "Failed to import question bank.",
+      );
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -947,6 +1015,25 @@ export default function App() {
 
             <div className="form-grid">
               <label>
+                <span>Question Bank</span>
+                <select
+                  value={config.question_set_id}
+                  onChange={(event) =>
+                    setConfig((previous) => ({
+                      ...previous,
+                      question_set_id: event.target.value,
+                    }))
+                  }
+                >
+                  {questionSets.map((questionSet) => (
+                    <option key={questionSet.id} value={questionSet.id}>
+                      {questionSet.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
                 <span>Role</span>
                 <select
                   value={config.role}
@@ -1009,6 +1096,50 @@ export default function App() {
                   }
                 />
               </label>
+            </div>
+
+            <div className="upload-card">
+              <div className="section-heading upload-heading">
+                <div>
+                  <h3>Custom question bank</h3>
+                  <p className="muted-copy">
+                    Import a JSON question bank and use it in the next interview.
+                  </p>
+                </div>
+                <button
+                  className="ghost-button"
+                  onClick={() => setQuestionBankUploadOpen((previous) => !previous)}
+                  type="button"
+                >
+                  Upload Question Bank
+                </button>
+              </div>
+
+              {questionBankUploadOpen ? (
+                <div className="upload-form">
+                  <label>
+                    <span>Question Bank JSON</span>
+                    <input
+                      accept=".json,application/json"
+                      onChange={(event) => setQuestionBankFile(event.target.files?.[0] ?? null)}
+                      type="file"
+                    />
+                  </label>
+                  <p className="muted-copy">
+                    Format: top-level `name` plus a `questions` array matching the built-in schema.
+                  </p>
+                  <div className="button-row">
+                    <button
+                      className="action-button"
+                      disabled={busy || !questionBankFile}
+                      onClick={() => void uploadQuestionBank()}
+                      type="button"
+                    >
+                      {busy ? "Importing..." : "Import Question Bank"}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </div>
 
             <div className="config-footer">

@@ -9,6 +9,20 @@ type MockFetchOptions = {
     mode: "browser" | "whisper";
     whisper_model: string;
   };
+  questionSets?: Array<{
+    id: string;
+    name: string;
+    source_type: "system" | "upload";
+    status: string;
+    question_count: number;
+  }>;
+  importedQuestionSet?: {
+    id: string;
+    name: string;
+    source_type: "system" | "upload";
+    status: string;
+    question_count: number;
+  };
   sessions?: Array<{
     session_id: string;
     role: string;
@@ -129,13 +143,28 @@ const mockMediaStream = {
 function mockFetch({
   configured = true,
   speechSettings = { mode: "browser" as const, whisper_model: "small" },
+  questionSets = [
+    {
+      id: "built_in_default",
+      name: "Built-in Question Bank",
+      source_type: "system" as const,
+      status: "ready",
+      question_count: 12,
+    },
+  ],
+  importedQuestionSet = {
+    id: "upload-pack-1",
+    name: "Uploaded Agent Pack",
+    source_type: "upload" as const,
+    status: "ready",
+    question_count: 3,
+  },
   sessions = [],
   createSessionResponse,
   transcriptionText = "transcribed answer",
 }: MockFetchOptions = {}) {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+  const questionSetState = [...questionSets];
+  const fetchSpy = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.endsWith("/history")) {
         return Promise.resolve({
@@ -172,6 +201,23 @@ function mockFetch({
         });
       }
 
+      if (url.endsWith("/question-sets/import") && init?.method === "POST") {
+        questionSetState.push(importedQuestionSet);
+        return Promise.resolve({
+          ok: true,
+          json: async () => importedQuestionSet,
+        });
+      }
+
+      if (url.endsWith("/question-sets")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            question_sets: questionSetState,
+          }),
+        });
+      }
+
       if (url.endsWith("/sessions") && init?.method === "POST") {
         return Promise.resolve({
           ok: true,
@@ -201,8 +247,9 @@ function mockFetch({
       }
 
       throw new Error(`Unhandled fetch request: ${url}`);
-    }),
-  );
+    });
+  vi.stubGlobal("fetch", fetchSpy);
+  return fetchSpy;
 }
 
 async function openInterview() {
@@ -265,6 +312,60 @@ describe("App", () => {
     expect(screen.getByRole("option", { name: "10 minutes" })).toBeTruthy();
     expect(screen.queryByRole("option", { name: "20 minutes" })).toBeNull();
     expect(screen.queryByRole("option", { name: "30 minutes" })).toBeNull();
+  });
+
+  it("shows the question bank selector in interview config", async () => {
+    mockFetch();
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Start Mock Interview" }));
+
+    const questionBankSelect = (await screen.findByLabelText("Question Bank")) as HTMLSelectElement;
+    expect(questionBankSelect.value).toBe("built_in_default");
+    expect(screen.getByRole("option", { name: "Built-in Question Bank" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Upload Question Bank" })).toBeTruthy();
+  });
+
+  it("uploads a question bank and selects it for the next session", async () => {
+    const fetchSpy = mockFetch();
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Start Mock Interview" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Upload Question Bank" }));
+
+    const fileInput = (await screen.findByLabelText("Question Bank JSON")) as HTMLInputElement;
+    const file = new File(
+      [
+        JSON.stringify({
+          name: "Uploaded Agent Pack",
+          questions: [],
+        }),
+      ],
+      "uploaded-agent-pack.json",
+      { type: "application/json" },
+    );
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Import Question Bank" }));
+
+    await screen.findByRole("option", { name: "Uploaded Agent Pack" });
+
+    const questionBankSelect = screen.getByLabelText("Question Bank") as HTMLSelectElement;
+    expect(questionBankSelect.value).toBe("upload-pack-1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Begin Interview" }));
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const sessionRequest = fetchSpy.mock.calls.find(
+      ([input, init]) => String(input).endsWith("/sessions") && init?.method === "POST",
+    );
+    expect(sessionRequest).toBeTruthy();
+    expect(JSON.parse(String(sessionRequest?.[1]?.body)).question_set_id).toBe("upload-pack-1");
   });
 
   it("opens settings instead of interview config when provider is not configured", async () => {

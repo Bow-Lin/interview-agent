@@ -1,3 +1,4 @@
+import json
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import patch
 
@@ -188,6 +189,7 @@ class SessionApiTest(IsolatedAsyncioTestCase):
         response = await self.client.post(
             "/sessions",
             json={
+                "question_set_id": "built_in_default",
                 "role": "agent_engineer",
                 "level": "mid",
                 "duration_minutes": 10,
@@ -203,6 +205,7 @@ class SessionApiTest(IsolatedAsyncioTestCase):
         response = await self.client.post(
             "/sessions",
             json={
+                "question_set_id": "built_in_default",
                 "role": "agent_engineer",
                 "level": "mid",
                 "duration_minutes": 10,
@@ -229,6 +232,7 @@ class SessionApiTest(IsolatedAsyncioTestCase):
             created = await self.client.post(
                 "/sessions",
                 json={
+                    "question_set_id": "built_in_default",
                     "role": "agent_engineer",
                     "level": "mid",
                     "duration_minutes": 10,
@@ -258,6 +262,7 @@ class SessionApiTest(IsolatedAsyncioTestCase):
             created = await self.client.post(
                 "/sessions",
                 json={
+                    "question_set_id": "built_in_default",
                     "role": "agent_engineer",
                     "level": "mid",
                     "duration_minutes": 10,
@@ -311,6 +316,7 @@ class SessionApiTest(IsolatedAsyncioTestCase):
             created = await self.client.post(
                 "/sessions",
                 json={
+                    "question_set_id": "built_in_default",
                     "role": "agent_engineer",
                     "level": "mid",
                     "duration_minutes": 10,
@@ -333,6 +339,7 @@ class SessionApiTest(IsolatedAsyncioTestCase):
         created = await self.client.post(
             "/sessions",
             json={
+                "question_set_id": "built_in_default",
                 "role": "agent_engineer",
                 "level": "mid",
                 "duration_minutes": 10,
@@ -362,6 +369,7 @@ class SessionApiTest(IsolatedAsyncioTestCase):
         created = await self.client.post(
             "/sessions",
             json={
+                "question_set_id": "built_in_default",
                 "role": "agent_engineer",
                 "level": "mid",
                 "duration_minutes": 10,
@@ -392,6 +400,7 @@ class SessionApiTest(IsolatedAsyncioTestCase):
         response = await self.client.post(
             "/sessions",
             json={
+                "question_set_id": "built_in_default",
                 "role": "backend_engineer",
                 "level": "senior",
                 "duration_minutes": 10,
@@ -407,6 +416,7 @@ class SessionApiTest(IsolatedAsyncioTestCase):
         response = await self.client.post(
             "/sessions",
             json={
+                "question_set_id": "built_in_default",
                 "role": "agent_engineer",
                 "level": "mid",
                 "duration_minutes": 15,
@@ -427,3 +437,157 @@ class SessionApiTest(IsolatedAsyncioTestCase):
         self.assertEqual(response.json()["base_url"], "https://api.openai.com/v1")
         self.assertEqual(response.json()["model"], "test-model")
         self.assertEqual(response.json()["api_key_set"], True)
+
+    async def test_question_sets_list_built_in_bank(self) -> None:
+        response = await self.client.get("/question-sets")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["question_sets"],
+            [
+                {
+                    "id": "built_in_default",
+                    "name": "Built-in Question Bank",
+                    "source_type": "system",
+                    "status": "ready",
+                    "question_count": 12,
+                }
+            ],
+        )
+
+    async def test_import_question_set_creates_new_bank(self) -> None:
+        payload = {
+            "name": "Custom Agent Pack",
+            "questions": [
+                {
+                    "id": "custom_agent_mid_001",
+                    "role": "agent_engineer",
+                    "level": "mid",
+                    "question_text": "How do agents recover from tool failures?",
+                    "expected_points": ["retry strategy", "fallback handling", "observability"],
+                    "tags": ["agents", "reliability"],
+                    "reference_answer": "Agents need retries, fallback behavior, and strong logging.",
+                },
+                {
+                    "id": "custom_agent_mid_002",
+                    "role": "agent_engineer",
+                    "level": "mid",
+                    "question_text": "What makes tool schemas important?",
+                    "expected_points": ["validation", "clear contracts", "error prevention"],
+                    "tags": ["tools"],
+                    "reference_answer": "Schemas validate tool inputs and clarify contracts.",
+                },
+                {
+                    "id": "custom_agent_mid_003",
+                    "role": "agent_engineer",
+                    "level": "mid",
+                    "question_text": "When should an agent ask for human approval?",
+                    "expected_points": ["high risk action", "uncertainty", "policy boundaries"],
+                    "tags": ["safety"],
+                    "reference_answer": "Agents should pause for risky or uncertain actions.",
+                },
+            ],
+        }
+
+        response = await self.client.post(
+            "/question-sets/import",
+            files={"file": ("custom-agent-pack.json", json.dumps(payload).encode("utf-8"), "application/json")},
+        )
+
+        self.assertEqual(response.status_code, 201)
+        body = response.json()
+        self.assertEqual(body["name"], "Custom Agent Pack")
+        self.assertEqual(body["question_count"], 3)
+        self.assertNotEqual(body["id"], "built_in_default")
+
+        listed = await self.client.get("/question-sets")
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(len(listed.json()["question_sets"]), 2)
+        self.assertEqual(listed.json()["question_sets"][1]["name"], "Custom Agent Pack")
+
+    async def test_import_question_set_rejects_invalid_role(self) -> None:
+        payload = {
+            "name": "Broken Pack",
+            "questions": [
+                {
+                    "id": "broken_001",
+                    "role": "ml_engineer",
+                    "level": "mid",
+                    "question_text": "What is model drift?",
+                    "expected_points": ["distribution shift"],
+                    "tags": ["ml"],
+                    "reference_answer": "Drift is a change in production data.",
+                }
+            ],
+        }
+
+        response = await self.client.post(
+            "/question-sets/import",
+            files={"file": ("broken-pack.json", json.dumps(payload).encode("utf-8"), "application/json")},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Invalid role", response.json()["detail"])
+
+    async def test_create_session_uses_selected_question_set(self) -> None:
+        await self.configure_llm()
+        import_payload = {
+            "name": "Focused Backend Pack",
+            "questions": [
+                {
+                    "id": "custom_backend_junior_001",
+                    "role": "backend_engineer",
+                    "level": "junior",
+                    "question_text": "How do you roll out schema changes safely?",
+                    "expected_points": ["backward compatibility", "migration steps", "monitoring"],
+                    "tags": ["database"],
+                    "reference_answer": "Roll out additive changes first and monitor each step.",
+                },
+                {
+                    "id": "custom_backend_junior_002",
+                    "role": "backend_engineer",
+                    "level": "junior",
+                    "question_text": "What should an API timeout protect against?",
+                    "expected_points": ["hung dependencies", "resource exhaustion", "user latency"],
+                    "tags": ["http"],
+                    "reference_answer": "Timeouts bound latency and resource usage.",
+                },
+                {
+                    "id": "custom_backend_junior_003",
+                    "role": "backend_engineer",
+                    "level": "junior",
+                    "question_text": "Why log request identifiers?",
+                    "expected_points": ["traceability", "debugging", "correlation"],
+                    "tags": ["observability"],
+                    "reference_answer": "Request ids correlate logs across services.",
+                },
+            ],
+        }
+        imported = await self.client.post(
+            "/question-sets/import",
+            files={
+                "file": (
+                    "focused-backend-pack.json",
+                    json.dumps(import_payload).encode("utf-8"),
+                    "application/json",
+                )
+            },
+        )
+        question_set_id = imported.json()["id"]
+
+        response = await self.client.post(
+            "/sessions",
+            json={
+                "question_set_id": question_set_id,
+                "role": "backend_engineer",
+                "level": "junior",
+                "duration_minutes": 10,
+                "allow_followup": True,
+            },
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(
+            response.json()["current_prompt"]["question_text"],
+            "How do you roll out schema changes safely?",
+        )

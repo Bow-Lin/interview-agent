@@ -32,7 +32,20 @@ class TranscriptionResponse(BaseModel):
     text: str
 
 
+class QuestionSetSummary(BaseModel):
+    id: str
+    name: str
+    source_type: Literal["system", "upload"]
+    status: str
+    question_count: int
+
+
+class QuestionSetListResponse(BaseModel):
+    question_sets: List[QuestionSetSummary]
+
+
 class SessionCreateRequest(BaseModel):
+    question_set_id: str = Field(..., min_length=1)
     role: str
     level: str
     duration_minutes: Literal[10, 20, 30]
@@ -47,6 +60,7 @@ class PromptPayload(BaseModel):
 
 class SessionCreateResponse(BaseModel):
     session_id: str
+    question_set_id: str
     status: str
     question_index: int
     question_limit: int
@@ -72,6 +86,7 @@ class AnswerResponse(BaseModel):
 
 class SessionStatusResponse(BaseModel):
     session_id: str
+    question_set_id: str
     status: str
     role: str
     level: str

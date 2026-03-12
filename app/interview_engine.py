@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
+from app.data import VALID_LEVELS, VALID_ROLES
 from app.database import Database
 from app.llm import EvaluationResult, LLMClient, LLMSettings
 from app.workflow import InterviewWorkflow
@@ -48,18 +49,30 @@ class InterviewEngine:
         self.workflow = InterviewWorkflow()
 
     def create_session(
-        self, role: str, level: str, duration_minutes: int, allow_followup: bool
+        self,
+        question_set_id: str,
+        role: str,
+        level: str,
+        duration_minutes: int,
+        allow_followup: bool,
     ) -> Dict[str, Any]:
         self._require_llm_settings()
         question_limit = QUESTION_LIMITS[duration_minutes]
-        questions = self.database.get_questions(role, level, question_limit)
+        try:
+            self.database.get_question_set(question_set_id)
+        except KeyError as exc:
+            raise ValueError(f"Question bank '{question_set_id}' was not found") from exc
+        questions = self.database.get_questions(question_set_id, role, level, question_limit)
         if len(questions) < question_limit:
-            raise ValueError(f"Not enough questions for role={role} level={level}")
+            raise ValueError(
+                f"Not enough questions for question_set={question_set_id} role={role} level={level}"
+            )
         session_id = str(uuid.uuid4())
         started_at = utc_now()
         selected_question_ids = [question["id"] for question in questions]
         self.database.create_session(
             session_id=session_id,
+            question_set_id=question_set_id,
             role=role,
             level=level,
             duration_minutes=duration_minutes,
@@ -80,6 +93,7 @@ class InterviewEngine:
         )
         return {
             "session_id": session_id,
+            "question_set_id": question_set_id,
             "status": "in_progress",
             "question_index": 0,
             "question_limit": question_limit,
@@ -99,6 +113,7 @@ class InterviewEngine:
             current_prompt = self._build_current_prompt(session)
         return {
             "session_id": session_id,
+            "question_set_id": session["question_set_id"],
             "status": session["status"],
             "role": session["role"],
             "level": session["level"],
@@ -284,6 +299,75 @@ class InterviewEngine:
 
     def list_history(self) -> List[Dict[str, Any]]:
         return self.database.list_history()
+
+    def list_question_sets(self) -> List[Dict[str, Any]]:
+        return self.database.list_question_sets()
+
+    def import_question_set(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        name = str(payload.get("name", "")).strip()
+        if not name:
+            raise ValueError("Question bank name is required")
+
+        raw_questions = payload.get("questions")
+        if not isinstance(raw_questions, list) or not raw_questions:
+            raise ValueError("Question bank must include at least one question")
+
+        normalized_questions: List[Dict[str, Any]] = []
+        seen_ids = set()
+        for index, raw_question in enumerate(raw_questions, start=1):
+            if not isinstance(raw_question, dict):
+                raise ValueError(f"Question #{index} must be an object")
+
+            question_id = str(raw_question.get("id", "")).strip()
+            if not question_id:
+                raise ValueError(f"Question #{index} is missing an id")
+            if question_id in seen_ids:
+                raise ValueError(f"Duplicate question id '{question_id}' in uploaded question bank")
+            seen_ids.add(question_id)
+
+            role = str(raw_question.get("role", "")).strip()
+            if role not in VALID_ROLES:
+                raise ValueError(f"Invalid role '{role}' for question '{question_id}'")
+
+            level = str(raw_question.get("level", "")).strip()
+            if level not in VALID_LEVELS:
+                raise ValueError(f"Invalid level '{level}' for question '{question_id}'")
+
+            question_text = str(raw_question.get("question_text", "")).strip()
+            if not question_text:
+                raise ValueError(f"Question '{question_id}' is missing question_text")
+
+            reference_answer = str(raw_question.get("reference_answer", "")).strip()
+            if not reference_answer:
+                raise ValueError(f"Question '{question_id}' is missing reference_answer")
+
+            expected_points = raw_question.get("expected_points")
+            if (
+                not isinstance(expected_points, list)
+                or not expected_points
+                or not all(isinstance(point, str) and point.strip() for point in expected_points)
+            ):
+                raise ValueError(
+                    f"Question '{question_id}' must include a non-empty expected_points array"
+                )
+
+            tags = raw_question.get("tags", [])
+            if not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags):
+                raise ValueError(f"Question '{question_id}' must include a tags string array")
+
+            normalized_questions.append(
+                {
+                    "id": question_id,
+                    "role": role,
+                    "level": level,
+                    "question_text": question_text,
+                    "expected_points": [point.strip() for point in expected_points],
+                    "tags": [tag.strip() for tag in tags if tag.strip()],
+                    "reference_answer": reference_answer,
+                }
+            )
+
+        return self.database.create_question_set(name, normalized_questions)
 
     def _build_current_prompt(self, session: Any) -> Dict[str, Any]:
         selected_question_ids = json.loads(session["selected_question_ids"])

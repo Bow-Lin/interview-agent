@@ -2,6 +2,17 @@ import json
 from typing import Iterable
 
 
+BUILT_IN_QUESTION_SET_ID = "built_in_default"
+BUILT_IN_QUESTION_SET_NAME = "Built-in Question Bank"
+VALID_ROLES = {
+    "agent_engineer",
+    "backend_engineer",
+    "frontend_engineer",
+    "algorithm_engineer",
+}
+VALID_LEVELS = {"junior", "mid", "senior"}
+
+
 QUESTION_BANK = [
     {
         "id": "agent_mid_001",

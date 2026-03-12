@@ -3,9 +3,10 @@ import sqlite3
 import threading
 import uuid
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
-from app.data import QUESTION_BANK, dump_json
+from app.data import BUILT_IN_QUESTION_SET_ID, BUILT_IN_QUESTION_SET_NAME, QUESTION_BANK, dump_json
 
 
 class Database:
@@ -30,8 +31,17 @@ class Database:
         with self.transaction() as conn:
             conn.executescript(
                 """
+                CREATE TABLE IF NOT EXISTS question_sets (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL UNIQUE,
+                    source_type TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    question_count INTEGER NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS question_bank (
                     id TEXT PRIMARY KEY,
+                    question_set_id TEXT NOT NULL DEFAULT 'built_in_default',
                     role TEXT NOT NULL,
                     level TEXT NOT NULL,
                     question_text TEXT NOT NULL,
@@ -41,6 +51,7 @@ class Database:
                 );
                 CREATE TABLE IF NOT EXISTS interview_sessions (
                     id TEXT PRIMARY KEY,
+                    question_set_id TEXT NOT NULL DEFAULT 'built_in_default',
                     role TEXT NOT NULL,
                     level TEXT NOT NULL,
                     duration_minutes INTEGER NOT NULL,
@@ -101,15 +112,42 @@ class Database:
                 );
                 """
             )
+            self._ensure_column(
+                conn,
+                "question_bank",
+                "question_set_id",
+                "TEXT NOT NULL DEFAULT 'built_in_default'",
+            )
+            self._ensure_column(
+                conn,
+                "interview_sessions",
+                "question_set_id",
+                "TEXT NOT NULL DEFAULT 'built_in_default'",
+            )
+            created_at = datetime.now(timezone.utc).isoformat()
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO question_sets (
+                    id, name, source_type, status, created_at, question_count
+                ) VALUES (?, ?, 'system', 'ready', ?, ?)
+                """,
+                (
+                    BUILT_IN_QUESTION_SET_ID,
+                    BUILT_IN_QUESTION_SET_NAME,
+                    created_at,
+                    len(QUESTION_BANK),
+                ),
+            )
             conn.executemany(
                 """
                 INSERT OR IGNORE INTO question_bank (
-                    id, role, level, question_text, expected_points, tags, reference_answer
-                ) VALUES (:id, :role, :level, :question_text, :expected_points, :tags, :reference_answer)
+                    id, question_set_id, role, level, question_text, expected_points, tags, reference_answer
+                ) VALUES (:id, :question_set_id, :role, :level, :question_text, :expected_points, :tags, :reference_answer)
                 """,
                 [
                     {
                         **row,
+                        "question_set_id": BUILT_IN_QUESTION_SET_ID,
                         "expected_points": dump_json(row["expected_points"]),
                         "tags": dump_json(row["tags"]),
                     }
@@ -118,14 +156,50 @@ class Database:
             )
             conn.execute(
                 """
+                UPDATE question_bank
+                SET question_set_id = ?
+                WHERE question_set_id IS NULL OR question_set_id = ''
+                """,
+                (BUILT_IN_QUESTION_SET_ID,),
+            )
+            conn.execute(
+                """
+                UPDATE interview_sessions
+                SET question_set_id = ?
+                WHERE question_set_id IS NULL OR question_set_id = ''
+                """,
+                (BUILT_IN_QUESTION_SET_ID,),
+            )
+            conn.execute(
+                """
+                UPDATE question_sets
+                SET question_count = (
+                    SELECT COUNT(*)
+                    FROM question_bank
+                    WHERE question_set_id = question_sets.id
+                )
+                """
+            )
+            conn.execute(
+                """
                 INSERT OR IGNORE INTO speech_settings (id, mode, whisper_model)
                 VALUES (1, 'browser', 'small')
                 """
             )
 
+    @staticmethod
+    def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+        columns = {
+            row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()  # noqa: S608
+        }
+        if column in columns:
+            return
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")  # noqa: S608
+
     def create_session(
         self,
         session_id: str,
+        question_set_id: str,
         role: str,
         level: str,
         duration_minutes: int,
@@ -138,12 +212,13 @@ class Database:
             conn.execute(
                 """
                 INSERT INTO interview_sessions (
-                    id, role, level, duration_minutes, allow_followup, status, started_at,
+                    id, question_set_id, role, level, duration_minutes, allow_followup, status, started_at,
                     question_limit, current_question_index, remaining_seconds, selected_question_ids
-                ) VALUES (?, ?, ?, ?, ?, 'in_progress', ?, ?, 0, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, 'in_progress', ?, ?, 0, ?, ?)
                 """,
                 (
                     session_id,
+                    question_set_id,
                     role,
                     level,
                     duration_minutes,
@@ -155,17 +230,86 @@ class Database:
                 ),
             )
 
-    def get_questions(self, role: str, level: str, limit: int) -> List[Dict[str, Any]]:
+    def get_questions(self, question_set_id: str, role: str, level: str, limit: int) -> List[Dict[str, Any]]:
         rows = self._conn.execute(
             """
             SELECT * FROM question_bank
-            WHERE role = ? AND level = ?
+            WHERE question_set_id = ? AND role = ? AND level = ?
             ORDER BY id
             LIMIT ?
             """,
-            (role, level, limit),
+            (question_set_id, role, level, limit),
         ).fetchall()
         return [self._question_row_to_dict(row) for row in rows]
+
+    def list_question_sets(self) -> List[Dict[str, Any]]:
+        rows = self._conn.execute(
+            """
+            SELECT id, name, source_type, status, question_count
+            FROM question_sets
+            ORDER BY CASE source_type WHEN 'system' THEN 0 ELSE 1 END, created_at, name
+            """
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_question_set(self, question_set_id: str) -> Dict[str, Any]:
+        row = self._conn.execute(
+            """
+            SELECT id, name, source_type, status, question_count
+            FROM question_sets
+            WHERE id = ?
+            """,
+            (question_set_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(question_set_id)
+        return dict(row)
+
+    def create_question_set(self, name: str, questions: List[Dict[str, Any]]) -> Dict[str, Any]:
+        question_set_id = str(uuid.uuid4())
+        created_at = datetime.now(timezone.utc).isoformat()
+        with self.transaction() as conn:
+            existing = conn.execute(
+                "SELECT 1 FROM question_sets WHERE name = ?",
+                (name,),
+            ).fetchone()
+            if existing is not None:
+                raise ValueError(f"Question bank '{name}' already exists")
+            conn.execute(
+                """
+                INSERT INTO question_sets (
+                    id, name, source_type, status, created_at, question_count
+                ) VALUES (?, ?, 'upload', 'ready', ?, ?)
+                """,
+                (question_set_id, name, created_at, len(questions)),
+            )
+            conn.executemany(
+                """
+                INSERT INTO question_bank (
+                    id, question_set_id, role, level, question_text, expected_points, tags, reference_answer
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        self._scoped_question_id(question_set_id, question["id"]),
+                        question_set_id,
+                        question["role"],
+                        question["level"],
+                        question["question_text"],
+                        dump_json(question["expected_points"]),
+                        dump_json(question["tags"]),
+                        question["reference_answer"],
+                    )
+                    for question in questions
+                ],
+            )
+        return {
+            "id": question_set_id,
+            "name": name,
+            "source_type": "upload",
+            "status": "ready",
+            "question_count": len(questions),
+        }
 
     def get_question(self, question_id: str) -> Dict[str, Any]:
         row = self._conn.execute(
@@ -492,6 +636,7 @@ class Database:
     def _question_row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
         return {
             "id": row["id"],
+            "question_set_id": row["question_set_id"],
             "role": row["role"],
             "level": row["level"],
             "question_text": row["question_text"],
@@ -499,3 +644,7 @@ class Database:
             "tags": json.loads(row["tags"]),
             "reference_answer": row["reference_answer"],
         }
+
+    @staticmethod
+    def _scoped_question_id(question_set_id: str, question_id: str) -> str:
+        return f"{question_set_id}:{question_id}"

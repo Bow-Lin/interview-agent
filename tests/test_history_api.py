@@ -27,6 +27,7 @@ class HistoryApiTest(IsolatedAsyncioTestCase):
         created = await self.client.post(
             "/sessions",
             json={
+                "question_set_id": "built_in_default",
                 "role": "backend_engineer",
                 "level": "junior",
                 "duration_minutes": 10,

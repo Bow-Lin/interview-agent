@@ -1,5 +1,6 @@
 import os
 import tempfile
+import json
 from pathlib import Path
 from typing import Optional
 
@@ -15,6 +16,8 @@ from app.schemas import (
     HistoryResponse,
     LLMSettingsRequest,
     LLMSettingsResponse,
+    QuestionSetListResponse,
+    QuestionSetSummary,
     SpeechSettingsRequest,
     SpeechSettingsResponse,
     SessionCreateRequest,
@@ -110,11 +113,32 @@ def create_app(testing: bool = False, llm_client=None, speech_transcriber=None) 
     async def create_session(payload: SessionCreateRequest):
         try:
             return engine.create_session(
+                question_set_id=payload.question_set_id,
                 role=payload.role,
                 level=payload.level,
                 duration_minutes=payload.duration_minutes,
                 allow_followup=payload.allow_followup,
             )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.get("/question-sets", response_model=QuestionSetListResponse)
+    async def get_question_sets():
+        return {"question_sets": engine.list_question_sets()}
+
+    @app.post("/question-sets/import", response_model=QuestionSetSummary, status_code=201)
+    async def import_question_set(file: UploadFile = File(...)):
+        try:
+            payload = json.loads((await file.read()).decode("utf-8"))
+        except UnicodeDecodeError:
+            raise HTTPException(status_code=400, detail="Question bank file must be UTF-8 encoded JSON")
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Question bank file must be valid JSON")
+        finally:
+            await file.close()
+
+        try:
+            return engine.import_question_set(payload)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
 
