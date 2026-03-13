@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { vi } from "vitest";
 
 import App, { DraftQuestionCard, InterviewView } from "./App";
@@ -388,6 +388,54 @@ describe("App", () => {
     expect(await screen.findByText("Interview Agent")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Start Mock Interview" })).toBeTruthy();
     expect(await screen.findByText(/agent engineer/i)).toBeTruthy();
+  });
+
+  it("renders the editorial control center summary on the home screen", async () => {
+    mockFetch({
+      questionSets: [
+        {
+          id: "built_in_default",
+          name: "Built-in Question Bank",
+          source_type: "system",
+          status: "ready",
+          question_count: 12,
+        },
+        {
+          id: "upload-pack-1",
+          name: "Uploaded Agent Pack",
+          source_type: "upload",
+          status: "ready",
+          question_count: 3,
+        },
+      ],
+      sessions: [
+        {
+          session_id: "session-1",
+          role: "agent_engineer",
+          level: "mid",
+          status: "completed",
+          total_score: 82,
+        },
+      ],
+    });
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Interview Control Center", level: 2 })).toBeTruthy();
+    expect(screen.getByText("Question banks")).toBeTruthy();
+    expect(screen.getByText("Completed loops")).toBeTruthy();
+    expect(screen.getByText("Input mode")).toBeTruthy();
+  });
+
+  it("keeps a single global settings entry in the top-right toolbar", async () => {
+    mockFetch();
+
+    render(<App />);
+
+    const masthead = await screen.findByRole("banner");
+    expect(within(masthead).getByRole("button", { name: "Settings" })).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "Settings" })).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Edit Settings" })).toBeNull();
   });
 
   it("defaults to a 10 minute interview and hides unsupported durations", async () => {

@@ -372,128 +372,151 @@ function InterviewViewComponent({
   voiceInputStatus,
 }: InterviewViewProps) {
   return (
-    <section className="card interview-card">
-      <div className="section-heading">
-        <div>
-          <h2>{formatRole(configRole)}</h2>
-          <p className="muted-copy">
-            Question {session.question_index + 1} of {session.question_limit}
-          </p>
-        </div>
-        <div className="status-cluster">
-          <span className="timer-chip">
-            {formatSeconds(displayRemainingSeconds ?? session.remaining_seconds)}
-          </span>
-          <button className="ghost-button" disabled={busy} onClick={() => void onFinishInterview()}>
-            Finish now
-          </button>
-        </div>
-      </div>
-
-      <article className="prompt-card">
-        <span className="prompt-tag">{formatPromptLabel(session.current_prompt.prompt_type)}</span>
-        <h3>{session.current_prompt.question_text}</h3>
-      </article>
-
-      <form className="answer-form" onSubmit={onSubmitAnswer}>
-        <label htmlFor="answer-box">Your answer</label>
-        <textarea
-          id="answer-box"
-          value={answer}
-          onChange={(event) => onAnswerChange(event.target.value)}
-          placeholder="Type your answer here..."
-          rows={7}
-        />
-        <div className="voice-input-panel">
-          <div className="voice-input-header">
-            <div>
-              <strong>Voice input</strong>
-              <p className="muted-copy">{voiceInputMessage}</p>
-            </div>
-            <button
-              className="ghost-button"
-              disabled={busy || voiceInputStatus === "unsupported" || voiceInputStatus === "stopping"}
-              onClick={() => (voiceInputStatus === "listening" ? onStopVoiceInput() : onStartVoiceInput())}
-              type="button"
-            >
-              {voiceInputStatus === "listening"
-                ? speechMode === "whisper"
-                  ? "Stop recording"
-                  : "Stop voice input"
-                : speechMode === "whisper"
-                  ? "Start recording"
-                  : "Start voice input"}
+    <section className="interview-layout">
+      <div className="card interview-card interview-main-card">
+        <div className="section-heading">
+          <div>
+            <p className="card-kicker">Live prompt</p>
+            <h2>{formatRole(configRole)}</h2>
+            <p className="muted-copy">
+              Question {session.question_index + 1} of {session.question_limit}
+            </p>
+          </div>
+          <div className="status-cluster">
+            <span className="timer-chip">
+              {formatSeconds(displayRemainingSeconds ?? session.remaining_seconds)}
+            </span>
+            <button className="ghost-button" disabled={busy} onClick={() => void onFinishInterview()}>
+              Finish now
             </button>
           </div>
-          <div className="voice-language-row" role="group" aria-label="Voice input language">
-            <span className="muted-copy">{speechMode === "whisper" ? "Language hint" : "Language"}</span>
-            <div className="button-row">
+        </div>
+
+        <article className="prompt-card">
+          <span className="prompt-tag">{formatPromptLabel(session.current_prompt.prompt_type)}</span>
+          <h3>{session.current_prompt.question_text}</h3>
+        </article>
+
+        <form className="answer-form" onSubmit={onSubmitAnswer}>
+          <label htmlFor="answer-box">Your answer</label>
+          <textarea
+            id="answer-box"
+            value={answer}
+            onChange={(event) => onAnswerChange(event.target.value)}
+            placeholder="Type your answer here..."
+            rows={7}
+          />
+          <div className="voice-input-panel">
+            <div className="voice-input-header">
+              <div>
+                <strong>Voice input</strong>
+                <p className="muted-copy">{voiceInputMessage}</p>
+              </div>
               <button
-                aria-pressed={voiceInputLanguage === "zh-CN"}
-                className={`ghost-button ${
-                  voiceInputLanguage === "zh-CN" ? "voice-language-button active" : "voice-language-button"
-                }`}
-                disabled={voiceInputStatus === "listening" || voiceInputStatus === "stopping"}
-                onClick={() => onVoiceLanguageChange("zh-CN")}
+                className="ghost-button"
+                disabled={busy || voiceInputStatus === "unsupported" || voiceInputStatus === "stopping"}
+                onClick={() => (voiceInputStatus === "listening" ? onStopVoiceInput() : onStartVoiceInput())}
                 type="button"
               >
-                中文
-              </button>
-              <button
-                aria-pressed={voiceInputLanguage === "en-US"}
-                className={`ghost-button ${
-                  voiceInputLanguage === "en-US" ? "voice-language-button active" : "voice-language-button"
-                }`}
-                disabled={voiceInputStatus === "listening" || voiceInputStatus === "stopping"}
-                onClick={() => onVoiceLanguageChange("en-US")}
-                type="button"
-              >
-                English
+                {voiceInputStatus === "listening"
+                  ? speechMode === "whisper"
+                    ? "Stop recording"
+                    : "Stop voice input"
+                  : speechMode === "whisper"
+                    ? "Start recording"
+                    : "Start voice input"}
               </button>
             </div>
+            <div className="voice-language-row" role="group" aria-label="Voice input language">
+              <span className="muted-copy">{speechMode === "whisper" ? "Language hint" : "Language"}</span>
+              <div className="button-row">
+                <button
+                  aria-pressed={voiceInputLanguage === "zh-CN"}
+                  className={`ghost-button ${
+                    voiceInputLanguage === "zh-CN" ? "voice-language-button active" : "voice-language-button"
+                  }`}
+                  disabled={voiceInputStatus === "listening" || voiceInputStatus === "stopping"}
+                  onClick={() => onVoiceLanguageChange("zh-CN")}
+                  type="button"
+                >
+                  中文
+                </button>
+                <button
+                  aria-pressed={voiceInputLanguage === "en-US"}
+                  className={`ghost-button ${
+                    voiceInputLanguage === "en-US" ? "voice-language-button active" : "voice-language-button"
+                  }`}
+                  disabled={voiceInputStatus === "listening" || voiceInputStatus === "stopping"}
+                  onClick={() => onVoiceLanguageChange("en-US")}
+                  type="button"
+                >
+                  English
+                </button>
+              </div>
+            </div>
+            <div className="voice-input-meta">
+              <span className={`voice-status-chip ${voiceInputStatus}`}>
+                {voiceInputStatus === "unsupported"
+                  ? "Unavailable"
+                  : voiceInputStatus === "listening"
+                    ? "Listening..."
+                    : voiceInputStatus === "stopping"
+                      ? "Processing..."
+                      : voiceInputStatus === "error"
+                        ? "Retry available"
+                        : "Ready"}
+              </span>
+              {interimTranscript ? (
+                <p className="voice-preview">
+                  Preview: <span>{interimTranscript}</span>
+                </p>
+              ) : null}
+            </div>
           </div>
-          <div className="voice-input-meta">
-            <span className={`voice-status-chip ${voiceInputStatus}`}>
-              {voiceInputStatus === "unsupported"
-                ? "Unavailable"
-                : voiceInputStatus === "listening"
-                  ? "Listening..."
-                  : voiceInputStatus === "stopping"
-                    ? "Processing..."
-                    : voiceInputStatus === "error"
-                      ? "Retry available"
-                      : "Ready"}
-            </span>
-            {interimTranscript ? (
-              <p className="voice-preview">
-                Preview: <span>{interimTranscript}</span>
-              </p>
-            ) : null}
+          <div className="answer-actions">
+            <span className="muted-copy">Be concise, but cover missing details clearly.</span>
+            <button
+              className="action-button"
+              disabled={
+                busy ||
+                voiceInputStatus === "listening" ||
+                voiceInputStatus === "stopping" ||
+                !answer.trim()
+              }
+              type="submit"
+            >
+              {busy ? "Submitting..." : "Submit Answer"}
+            </button>
           </div>
-        </div>
-        <div className="answer-actions">
-          <span className="muted-copy">Be concise, but cover missing details clearly.</span>
-          <button
-            className="action-button"
-            disabled={
-              busy ||
-              voiceInputStatus === "listening" ||
-              voiceInputStatus === "stopping" ||
-              !answer.trim()
-            }
-            type="submit"
-          >
-            {busy ? "Submitting..." : "Submit Answer"}
-          </button>
-        </div>
-      </form>
+        </form>
+      </div>
 
-      <section>
-        <div className="section-heading">
-          <h3>Conversation</h3>
-        </div>
-        <TranscriptList transcript={transcript} />
-      </section>
+      <aside className="interview-sidebar">
+        <section className="card sidebar-card">
+          <p className="card-kicker">Session view</p>
+          <div className="summary-stack">
+            <article className="summary-card compact-summary-card">
+              <span className="summary-label">Prompt type</span>
+              <strong>{formatPromptLabel(session.current_prompt.prompt_type)}</strong>
+            </article>
+            <article className="summary-card compact-summary-card">
+              <span className="summary-label">Input mode</span>
+              <strong>{speechMode === "whisper" ? "Whisper" : "Browser"}</strong>
+            </article>
+            <article className="summary-card compact-summary-card">
+              <span className="summary-label">Transcript</span>
+              <strong>{transcript.length} turns</strong>
+            </article>
+          </div>
+        </section>
+
+        <section className="card conversation-card">
+          <div className="section-heading">
+            <h3>Conversation</h3>
+          </div>
+          <TranscriptList transcript={transcript} />
+        </section>
+      </aside>
     </section>
   );
 }
@@ -659,6 +682,32 @@ export default function App() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const completedSessionCount = history.filter((item) => item.status === "completed").length;
+  const readyQuestionBankCount = questionSets.filter((questionSet) => questionSet.status === "ready").length;
+  const uploadedQuestionBankCount = questionSets.filter(
+    (questionSet) => questionSet.source_type === "upload",
+  ).length;
+  const activeSpeechModeLabel = speechSettings.mode === "whisper" ? "Whisper" : "Browser";
+  const viewTitle =
+    view === "home"
+      ? "Interview Control Center"
+      : view === "config"
+        ? "Session Setup"
+        : view === "manage"
+          ? "Question Bank Library"
+          : view === "interview"
+            ? "Live Interview Session"
+            : "Performance Report";
+  const viewSummary =
+    view === "home"
+      ? "Run local-first mock interviews with sharper setup, tighter feedback loops, and structured reports."
+      : view === "config"
+        ? "Tune role, question bank, and follow-up behavior before you start the session."
+        : view === "manage"
+          ? "Import, generate, and curate question banks without leaving the workspace."
+          : view === "interview"
+            ? "Stay focused on the active prompt while the side rail keeps timing and transcript context visible."
+            : "Review score patterns, strengths, and missing points as one editorial-style debrief.";
 
   useEffect(() => {
     void loadHistory();
@@ -1380,26 +1429,26 @@ export default function App() {
       <div className="ambient ambient-right" />
 
       <main className="panel">
-        <header className="hero">
-          <p className="eyebrow">Interactive Interview Simulator</p>
-          <h1>Interview Agent</h1>
-          <p className="hero-copy">
-            A local Web MVP for question-bank driven interviews, dynamic follow-ups, and
-            structured feedback reports.
-          </p>
-        </header>
-
-        {error ? <div className="error-banner">{error}</div> : null}
-
-        {view === "home" ? (
-          <section className="card-grid">
-            <section className="card primary-card">
-              <h2>Start a new mock interview</h2>
-              <p>
-                Pick a target role, answer in text, and let the interviewer push on missing
-                points before generating a report.
-              </p>
-              <div className="button-row">
+        <header className={`hero ${view === "home" ? "hero-grid" : "hero-shell"}`}>
+          <div className="hero-copy-block">
+            <div className="hero-topbar">
+              <p className="eyebrow">Interactive Interview Simulator</p>
+              <button className="ghost-button toolbar-button" onClick={() => openSettings()}>
+                Settings
+              </button>
+            </div>
+            <div className="hero-heading">
+              <h1>Interview Agent</h1>
+              <h2>{viewTitle}</h2>
+            </div>
+            <p className="hero-copy">{viewSummary}</p>
+            <div className="hero-chip-row">
+              <span className="hero-chip">Local-first workflow</span>
+              <span className="hero-chip">Voice-ready input</span>
+              <span className="hero-chip">Structured reports</span>
+            </div>
+            {view === "home" ? (
+              <div className="button-row hero-actions">
                 <button
                   className="action-button"
                   onClick={() => {
@@ -1416,15 +1465,78 @@ export default function App() {
                   Manage Question Banks
                 </button>
               </div>
+            ) : null}
+          </div>
+
+          {view === "home" ? (
+            <aside className="hero-aside card metrics-panel">
+              <div className="section-heading metrics-heading">
+                <div>
+                  <p className="card-kicker">Workspace summary</p>
+                  <h3>Interview Control Center</h3>
+                </div>
+                <span className="score-pill">{llmSettings.configured ? "LLM ready" : "Setup pending"}</span>
+              </div>
+              <div className="metrics-stack">
+                <article className="metric-card">
+                  <span className="summary-label">Question banks</span>
+                  <strong>{readyQuestionBankCount}</strong>
+                  <small>{uploadedQuestionBankCount} uploaded packs in the library</small>
+                </article>
+                <article className="metric-card">
+                  <span className="summary-label">Completed loops</span>
+                  <strong>{completedSessionCount}</strong>
+                  <small>{history.length} stored sessions available in history</small>
+                </article>
+                <article className="metric-card">
+                  <span className="summary-label">Input mode</span>
+                  <strong>{activeSpeechModeLabel}</strong>
+                  <small>Switch between browser speech and Whisper in Settings</small>
+                </article>
+              </div>
+            </aside>
+          ) : null}
+        </header>
+
+        {error ? <div className="error-banner">{error}</div> : null}
+
+        {view === "home" ? (
+          <section className="card-grid home-layout">
+            <section className="card primary-card editorial-card">
+              <div className="card-copy">
+                <p className="card-kicker">Practice loop</p>
+                <h2>Start a new mock interview</h2>
+                <p>
+                  Pick a target role, answer in text or voice, and let the interviewer press on
+                  missing points before the final debrief.
+                </p>
+              </div>
+              <ol className="process-list">
+                <li>
+                  <span>01</span>
+                  Configure the role, level, and question bank in one focused setup view.
+                </li>
+                <li>
+                  <span>02</span>
+                  Answer with text or speech while the prompt rail keeps the live session grounded.
+                </li>
+                <li>
+                  <span>03</span>
+                  Review the structured score breakdown and revisit finished sessions from history.
+                </li>
+              </ol>
+              <p className="card-note">
+                Built for short, repeatable rehearsal loops rather than long onboarding flows.
+              </p>
             </section>
 
             <section className="card history-card">
               <div className="section-heading">
-                <h2>History</h2>
+                <div>
+                  <p className="card-kicker">Session archive</p>
+                  <h2>History</h2>
+                </div>
                 <div className="button-row">
-                  <button className="ghost-button" onClick={() => openSettings()}>
-                    Settings
-                  </button>
                   <button className="ghost-button" onClick={() => void loadHistory()}>
                     Refresh
                   </button>
@@ -1455,12 +1567,15 @@ export default function App() {
         ) : null}
 
         {view === "config" ? (
-          <section className="card config-card">
-            <div className="section-heading">
-              <h2>Configure interview</h2>
-              <button className="ghost-button" onClick={resetToHome}>
-                Back
-              </button>
+            <section className="card config-card">
+              <div className="section-heading">
+                <div>
+                  <p className="card-kicker">Preparation</p>
+                  <h2>Configure interview</h2>
+                </div>
+                <button className="ghost-button" onClick={resetToHome}>
+                  Back
+                </button>
             </div>
 
             <div className="form-grid">
@@ -1554,9 +1669,6 @@ export default function App() {
                 questions and can ask up to two follow-ups per question.
               </p>
               <div className="button-row">
-                <button className="ghost-button" onClick={() => openSettings()}>
-                  Edit Settings
-                </button>
                 <button className="action-button" disabled={busy} onClick={() => void createSession()}>
                   {busy ? "Creating..." : "Begin Interview"}
                 </button>
@@ -1568,7 +1680,10 @@ export default function App() {
         {view === "manage" ? (
           <section className="card config-card">
             <div className="section-heading">
-              <h2>Manage Question Banks</h2>
+              <div>
+                <p className="card-kicker">Content ops</p>
+                <h2>Manage Question Banks</h2>
+              </div>
               <button className="ghost-button" onClick={resetToHome}>
                 Back
               </button>
