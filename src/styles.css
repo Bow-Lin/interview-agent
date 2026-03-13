@@ -261,6 +261,27 @@ button {
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.question-bank-list-section {
+  margin-top: 24px;
+}
+
+.question-bank-list {
+  gap: 14px;
+}
+
+.question-bank-item {
+  cursor: default;
+}
+
+.question-bank-item:hover {
+  transform: none;
+}
+
+.danger-button {
+  background: rgba(214, 86, 72, 0.18);
+  color: #ffd5cb;
+}
+
 .draft-form-grid {
   display: grid;
   gap: 14px;

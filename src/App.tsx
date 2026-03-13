@@ -3,7 +3,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 type Role = "agent_engineer" | "backend_engineer" | "frontend_engineer" | "algorithm_engineer";
 type Level = "junior" | "mid" | "senior";
 type PromptType = "main_question" | "followup";
-type View = "home" | "config" | "interview" | "report";
+type View = "home" | "config" | "manage" | "interview" | "report";
 type Provider = "openai_compatible";
 type VoiceInputStatus = "unsupported" | "idle" | "listening" | "stopping" | "error";
 type SpeechInputMode = "browser" | "whisper";
@@ -298,6 +298,10 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(detail || `Request failed: ${response.status}`);
   }
 
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
   return (await response.json()) as T;
 }
 
@@ -419,6 +423,10 @@ export default function App() {
     }
     return `${report.total_score} / 100`;
   }, [report]);
+  const uploadedQuestionSets = useMemo(
+    () => questionSets.filter((questionSet) => questionSet.source_type === "upload"),
+    [questionSets],
+  );
 
   async function loadHistory() {
     try {
@@ -606,6 +614,23 @@ export default function App() {
     } catch (requestError) {
       setError(
         requestError instanceof Error ? requestError.message : "Failed to import draft question bank.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteQuestionBank(questionSetId: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      await apiRequest<void>(`/question-sets/${questionSetId}`, {
+        method: "DELETE",
+      });
+      await loadQuestionSets();
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error ? requestError.message : "Failed to delete question bank.",
       );
     } finally {
       setBusy(false);
@@ -1078,18 +1103,23 @@ export default function App() {
                 Pick a target role, answer in text, and let the interviewer push on missing
                 points before generating a report.
               </p>
-              <button
-                className="action-button"
-                onClick={() => {
-                  if (!llmSettings.configured) {
-                    openSettings({ redirectToConfig: true });
-                    return;
-                  }
-                  setView("config");
-                }}
-              >
-                Start Mock Interview
-              </button>
+              <div className="button-row">
+                <button
+                  className="action-button"
+                  onClick={() => {
+                    if (!llmSettings.configured) {
+                      openSettings({ redirectToConfig: true });
+                      return;
+                    }
+                    setView("config");
+                  }}
+                >
+                  Start Mock Interview
+                </button>
+                <button className="ghost-button" onClick={() => setView("manage")}>
+                  Manage Question Banks
+                </button>
+              </div>
             </section>
 
             <section className="card history-card">
@@ -1161,21 +1191,12 @@ export default function App() {
                 <span>Role</span>
                 <select
                   value={config.role}
-                  onChange={(event) => {
-                    const nextRole = event.target.value as Role;
+                  onChange={(event) =>
                     setConfig((previous) => ({
                       ...previous,
-                      role: nextRole,
-                    }));
-                    setQuestionBankDraft((previous) =>
-                      previous
-                        ? {
-                            ...previous,
-                            role: nextRole,
-                          }
-                        : previous,
-                    );
-                  }}
+                      role: event.target.value as Role,
+                    }))
+                  }
                 >
                   <option value="agent_engineer">Agent Engineer</option>
                   <option value="backend_engineer">Backend Engineer</option>
@@ -1231,12 +1252,38 @@ export default function App() {
               </label>
             </div>
 
+            <div className="config-footer">
+              <p className="muted-copy">
+                {config.duration_minutes} minute sessions will sample a fixed number of main
+                questions and can ask up to two follow-ups per question.
+              </p>
+              <div className="button-row">
+                <button className="ghost-button" onClick={() => openSettings()}>
+                  Edit Settings
+                </button>
+                <button className="action-button" disabled={busy} onClick={() => void createSession()}>
+                  {busy ? "Creating..." : "Begin Interview"}
+                </button>
+              </div>
+            </div>
+          </section>
+        ) : null}
+
+        {view === "manage" ? (
+          <section className="card config-card">
+            <div className="section-heading">
+              <h2>Manage Question Banks</h2>
+              <button className="ghost-button" onClick={resetToHome}>
+                Back
+              </button>
+            </div>
+
             <div className="upload-card">
               <div className="section-heading upload-heading">
                 <div>
-                  <h3>Custom question bank</h3>
+                  <h3>Import or Generate</h3>
                   <p className="muted-copy">
-                    Import JSON directly or generate a draft from QA-style text before importing.
+                    Upload JSON directly or generate a draft from QA-style text before importing.
                   </p>
                 </div>
                 <div className="button-row">
@@ -1286,6 +1333,32 @@ export default function App() {
               {questionBankTextOpen ? (
                 <div className="upload-form text-draft-form">
                   <label>
+                    <span>Role</span>
+                    <select
+                      onChange={(event) => {
+                        const nextRole = event.target.value as Role;
+                        setConfig((previous) => ({
+                          ...previous,
+                          role: nextRole,
+                        }));
+                        setQuestionBankDraft((previous) =>
+                          previous
+                            ? {
+                                ...previous,
+                                role: nextRole,
+                              }
+                            : previous,
+                        );
+                      }}
+                      value={config.role}
+                    >
+                      <option value="agent_engineer">Agent Engineer</option>
+                      <option value="backend_engineer">Backend Engineer</option>
+                      <option value="frontend_engineer">Frontend Engineer</option>
+                      <option value="algorithm_engineer">Algorithm Engineer</option>
+                    </select>
+                  </label>
+                  <label>
                     <span>Question Bank Name</span>
                     <input
                       onChange={(event) => {
@@ -1321,8 +1394,8 @@ export default function App() {
                     />
                   </label>
                   <p className="muted-copy">
-                    Supported format: QA-style text with clear `Q:` / `A:` pairs. The current
-                    role selection is used for the generated draft.
+                    Supported format: QA-style text with clear `Q:` / `A:` pairs. The selected
+                    role is used for the generated draft.
                   </p>
                   <div className="button-row">
                     <button
@@ -1452,20 +1525,38 @@ export default function App() {
               ) : null}
             </div>
 
-            <div className="config-footer">
-              <p className="muted-copy">
-                {config.duration_minutes} minute sessions will sample a fixed number of main
-                questions and can ask up to two follow-ups per question.
-              </p>
-              <div className="button-row">
-                <button className="ghost-button" onClick={() => openSettings()}>
-                  Edit Settings
-                </button>
-                <button className="action-button" disabled={busy} onClick={() => void createSession()}>
-                  {busy ? "Creating..." : "Begin Interview"}
-                </button>
+            <section className="question-bank-list-section">
+              <div className="section-heading">
+                <h3>Available Question Banks</h3>
               </div>
-            </div>
+              <ul className="history-list question-bank-list">
+                {questionSets.map((questionSet) => (
+                  <li key={questionSet.id}>
+                    <div className="history-item question-bank-item">
+                      <span>
+                        <strong>{questionSet.name}</strong>
+                        <small>
+                          {questionSet.source_type === "system" ? "Built-in" : "Uploaded"} ·{" "}
+                          {questionSet.question_count} questions
+                        </small>
+                      </span>
+                      {questionSet.source_type === "upload" ? (
+                        <button
+                          className="ghost-button danger-button"
+                          disabled={busy}
+                          onClick={() => void deleteQuestionBank(questionSet.id)}
+                          type="button"
+                        >
+                          Delete {questionSet.name}
+                        </button>
+                      ) : (
+                        <span className="score-pill">Default</span>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </section>
           </section>
         ) : null}
 

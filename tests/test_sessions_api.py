@@ -630,6 +630,130 @@ class SessionApiTest(IsolatedAsyncioTestCase):
         self.assertEqual(listed.status_code, 200)
         self.assertEqual(listed.json()["question_sets"][-1]["name"], "Drafted Backend Pack")
 
+    async def test_soft_delete_hides_uploaded_question_set(self) -> None:
+        imported = await self.client.post(
+            "/question-sets/import",
+            files={
+                "file": (
+                    "delete-me.json",
+                    json.dumps(
+                        {
+                            "name": "Delete Me",
+                            "questions": [
+                                {
+                                    "id": "delete_me_001",
+                                    "role": "agent_engineer",
+                                    "level": "mid",
+                                    "question_text": "What is an agent?",
+                                    "expected_points": ["autonomy"],
+                                    "tags": ["agents"],
+                                    "reference_answer": "An agent chooses actions.",
+                                },
+                                {
+                                    "id": "delete_me_002",
+                                    "role": "agent_engineer",
+                                    "level": "mid",
+                                    "question_text": "Why use tools?",
+                                    "expected_points": ["external actions"],
+                                    "tags": ["tools"],
+                                    "reference_answer": "Tools extend capability.",
+                                },
+                                {
+                                    "id": "delete_me_003",
+                                    "role": "agent_engineer",
+                                    "level": "mid",
+                                    "question_text": "How do agents stop?",
+                                    "expected_points": ["limits"],
+                                    "tags": ["safety"],
+                                    "reference_answer": "Use stop conditions.",
+                                },
+                            ],
+                        }
+                    ).encode("utf-8"),
+                    "application/json",
+                )
+            },
+        )
+        self.assertEqual(imported.status_code, 201)
+        question_set_id = imported.json()["id"]
+
+        deleted = await self.client.delete(f"/question-sets/{question_set_id}")
+        self.assertEqual(deleted.status_code, 204)
+
+        listed = await self.client.get("/question-sets")
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(
+            [item["name"] for item in listed.json()["question_sets"]],
+            ["Built-in Question Bank"],
+        )
+
+    async def test_soft_delete_allows_reimport_with_same_name(self) -> None:
+        payload = {
+            "name": "Replaceable Pack",
+            "questions": [
+                {
+                    "id": "replaceable_001",
+                    "role": "agent_engineer",
+                    "level": "mid",
+                    "question_text": "What is an agent?",
+                    "expected_points": ["autonomy"],
+                    "tags": ["agents"],
+                    "reference_answer": "An agent chooses actions.",
+                },
+                {
+                    "id": "replaceable_002",
+                    "role": "agent_engineer",
+                    "level": "mid",
+                    "question_text": "Why use tools?",
+                    "expected_points": ["external actions"],
+                    "tags": ["tools"],
+                    "reference_answer": "Tools extend capability.",
+                },
+                {
+                    "id": "replaceable_003",
+                    "role": "agent_engineer",
+                    "level": "mid",
+                    "question_text": "How do agents stop?",
+                    "expected_points": ["limits"],
+                    "tags": ["safety"],
+                    "reference_answer": "Use stop conditions.",
+                },
+            ],
+        }
+        first_import = await self.client.post(
+            "/question-sets/import",
+            files={
+                "file": (
+                    "replaceable-pack.json",
+                    json.dumps(payload).encode("utf-8"),
+                    "application/json",
+                )
+            },
+        )
+        self.assertEqual(first_import.status_code, 201)
+
+        deleted = await self.client.delete(f"/question-sets/{first_import.json()['id']}")
+        self.assertEqual(deleted.status_code, 204)
+
+        second_import = await self.client.post(
+            "/question-sets/import",
+            files={
+                "file": (
+                    "replaceable-pack-v2.json",
+                    json.dumps(payload).encode("utf-8"),
+                    "application/json",
+                )
+            },
+        )
+        self.assertEqual(second_import.status_code, 201)
+        self.assertEqual(second_import.json()["name"], "Replaceable Pack")
+
+    async def test_delete_rejects_built_in_question_set(self) -> None:
+        response = await self.client.delete("/question-sets/built_in_default")
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("cannot be deleted", response.json()["detail"])
+
     async def test_create_session_uses_selected_question_set(self) -> None:
         await self.configure_llm()
         import_payload = {

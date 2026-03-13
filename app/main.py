@@ -128,6 +128,15 @@ def create_app(testing: bool = False, llm_client=None, speech_transcriber=None) 
     async def get_question_sets():
         return {"question_sets": engine.list_question_sets()}
 
+    @app.delete("/question-sets/{question_set_id}", status_code=204)
+    async def delete_question_set(question_set_id: str):
+        try:
+            engine.soft_delete_question_set(question_set_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Question bank not found")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
     @app.post("/question-sets/import", response_model=QuestionSetSummary, status_code=201)
     async def import_question_set(file: UploadFile = File(...)):
         try:

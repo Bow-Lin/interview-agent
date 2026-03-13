@@ -247,6 +247,7 @@ class Database:
             """
             SELECT id, name, source_type, status, question_count
             FROM question_sets
+            WHERE status = 'ready'
             ORDER BY CASE source_type WHEN 'system' THEN 0 ELSE 1 END, created_at, name
             """
         ).fetchall()
@@ -310,6 +311,23 @@ class Database:
             "status": "ready",
             "question_count": len(questions),
         }
+
+    def soft_delete_question_set(self, question_set_id: str) -> None:
+        question_set = self.get_question_set(question_set_id)
+        if question_set["source_type"] == "system":
+            raise ValueError("Built-in question banks cannot be deleted")
+        if question_set["status"] == "deleted":
+            raise KeyError(question_set_id)
+        with self.transaction() as conn:
+            conn.execute(
+                """
+                UPDATE question_sets
+                SET status = 'deleted',
+                    name = ?
+                WHERE id = ?
+                """,
+                (f"__deleted__:{question_set_id}:{question_set['name']}", question_set_id),
+            )
 
     def get_question(self, question_id: str) -> Dict[str, Any]:
         row = self._conn.execute(

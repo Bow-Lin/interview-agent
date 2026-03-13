@@ -264,6 +264,21 @@ function mockFetch({
         });
       }
 
+      if (url.includes("/question-sets/") && init?.method === "DELETE") {
+        const questionSetId = url.split("/").pop();
+        const questionSetIndex = questionSetState.findIndex(
+          (questionSet) => questionSet.id === questionSetId,
+        );
+        if (questionSetIndex >= 0) {
+          questionSetState.splice(questionSetIndex, 1);
+        }
+        return Promise.resolve({
+          ok: true,
+          status: 204,
+          text: async () => "",
+        });
+      }
+
       if (url.endsWith("/question-sets")) {
         return Promise.resolve({
           ok: true,
@@ -379,7 +394,8 @@ describe("App", () => {
     const questionBankSelect = (await screen.findByLabelText("Question Bank")) as HTMLSelectElement;
     expect(questionBankSelect.value).toBe("built_in_default");
     expect(screen.getByRole("option", { name: "Built-in Question Bank" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Upload Question Bank" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Upload Question Bank" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Generate from Text" })).toBeNull();
   });
 
   it("uploads a question bank and selects it for the next session", async () => {
@@ -387,7 +403,7 @@ describe("App", () => {
 
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Start Mock Interview" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Manage Question Banks" }));
     fireEvent.click(await screen.findByRole("button", { name: "Upload Question Bank" }));
 
     const fileInput = (await screen.findByLabelText("Question Bank JSON")) as HTMLInputElement;
@@ -404,6 +420,11 @@ describe("App", () => {
     fireEvent.change(fileInput, { target: { files: [file] } });
 
     fireEvent.click(screen.getByRole("button", { name: "Import Question Bank" }));
+
+    expect(await screen.findByText("Uploaded Agent Pack")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start Mock Interview" }));
 
     await screen.findByRole("option", { name: "Uploaded Agent Pack" });
 
@@ -423,6 +444,117 @@ describe("App", () => {
     expect(JSON.parse(String(sessionRequest?.[1]?.body)).question_set_id).toBe("upload-pack-1");
   });
 
+  it("shows a manage question banks entry on the home screen", async () => {
+    mockFetch();
+
+    render(<App />);
+
+    expect(await screen.findByRole("button", { name: "Start Mock Interview" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Manage Question Banks" })).toBeTruthy();
+  });
+
+  it("manages question banks on a dedicated page and hides deleted sets from config", async () => {
+    const fetchSpy = mockFetch({
+      questionSets: [
+        {
+          id: "built_in_default",
+          name: "Built-in Question Bank",
+          source_type: "system",
+          status: "ready",
+          question_count: 12,
+        },
+        {
+          id: "upload-pack-1",
+          name: "Uploaded Agent Pack",
+          source_type: "upload",
+          status: "ready",
+          question_count: 3,
+        },
+      ],
+    });
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Manage Question Banks" }));
+
+    expect(await screen.findByText("Manage Question Banks")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Upload Question Bank" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Generate from Text" })).toBeTruthy();
+    expect(screen.getByText("Uploaded Agent Pack")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete Uploaded Agent Pack" }));
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByText("Uploaded Agent Pack")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start Mock Interview" }));
+
+    const questionBankSelect = (await screen.findByLabelText("Question Bank")) as HTMLSelectElement;
+    expect(questionBankSelect.value).toBe("built_in_default");
+    expect(screen.queryByRole("option", { name: "Uploaded Agent Pack" })).toBeNull();
+
+    const deleteRequest = fetchSpy.mock.calls.find(
+      ([input, init]) => String(input).includes("/question-sets/upload-pack-1") && init?.method === "DELETE",
+    );
+    expect(deleteRequest).toBeTruthy();
+  });
+
+  it("preserves the current draft while deleting a different question bank", async () => {
+    mockFetch({
+      questionSets: [
+        {
+          id: "built_in_default",
+          name: "Built-in Question Bank",
+          source_type: "system",
+          status: "ready",
+          question_count: 12,
+        },
+        {
+          id: "upload-pack-1",
+          name: "Uploaded Agent Pack",
+          source_type: "upload",
+          status: "ready",
+          question_count: 3,
+        },
+      ],
+    });
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Manage Question Banks" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Generate from Text" }));
+
+    fireEvent.change(await screen.findByLabelText("Question Bank Name"), {
+      target: { value: "Generated Agent Pack" },
+    });
+    fireEvent.change(screen.getByLabelText("Source Text"), {
+      target: {
+        value: "Q: What is an AI agent?\nA: It chooses actions based on context.",
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Parse to Draft" }));
+
+    expect(await screen.findByText("Draft Preview")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete Uploaded Agent Pack" }));
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("Draft Preview")).toBeTruthy();
+    expect((screen.getByLabelText("Question Bank Name") as HTMLInputElement).value).toBe(
+      "Generated Agent Pack",
+    );
+    expect((screen.getByLabelText("Source Text") as HTMLTextAreaElement).value).toContain(
+      "What is an AI agent?",
+    );
+  });
+
   it("parses QA text into a draft and imports it as a new question bank", async () => {
     const fetchSpy = mockFetch({
       importedQuestionSet: {
@@ -436,7 +568,7 @@ describe("App", () => {
 
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Start Mock Interview" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Manage Question Banks" }));
     fireEvent.click(await screen.findByRole("button", { name: "Generate from Text" }));
 
     fireEvent.change(await screen.findByLabelText("Question Bank Name"), {
@@ -456,6 +588,11 @@ describe("App", () => {
     expect(screen.getByDisplayValue("It chooses actions based on context.")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Import Draft as New Question Bank" }));
+
+    expect(await screen.findByText("Generated Agent Pack")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    fireEvent.click(screen.getByRole("button", { name: "Start Mock Interview" }));
 
     await screen.findByRole("option", { name: "Generated Agent Pack" });
 
@@ -480,7 +617,7 @@ describe("App", () => {
 
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Start Mock Interview" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Manage Question Banks" }));
     fireEvent.click(await screen.findByRole("button", { name: "Generate from Text" }));
 
     fireEvent.change(await screen.findByLabelText("Question Bank Name"), {
@@ -583,7 +720,7 @@ describe("App", () => {
 
     render(<App />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Start Mock Interview" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Manage Question Banks" }));
     fireEvent.click(await screen.findByRole("button", { name: "Generate from Text" }));
 
     fireEvent.change(await screen.findByLabelText("Question Bank Name"), {

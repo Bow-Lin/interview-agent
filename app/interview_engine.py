@@ -59,9 +59,11 @@ class InterviewEngine:
         self._require_llm_settings()
         question_limit = QUESTION_LIMITS[duration_minutes]
         try:
-            self.database.get_question_set(question_set_id)
+            question_set = self.database.get_question_set(question_set_id)
         except KeyError as exc:
             raise ValueError(f"Question bank '{question_set_id}' was not found") from exc
+        if question_set["status"] != "ready":
+            raise ValueError(f"Question bank '{question_set_id}' is unavailable")
         questions = self.database.get_questions(question_set_id, role, level, question_limit)
         if len(questions) < question_limit:
             raise ValueError(
@@ -302,6 +304,9 @@ class InterviewEngine:
 
     def list_question_sets(self) -> List[Dict[str, Any]]:
         return self.database.list_question_sets()
+
+    def soft_delete_question_set(self, question_set_id: str) -> None:
+        self.database.soft_delete_question_set(question_set_id)
 
     async def parse_question_set_text(
         self, *, name: str, role: str, source_text: str
