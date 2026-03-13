@@ -237,9 +237,38 @@ button {
   margin-top: 16px;
 }
 
-.upload-form label {
+.upload-form label,
+.draft-form-grid label {
   display: grid;
   gap: 8px;
+}
+
+.draft-preview {
+  display: grid;
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.draft-question-list {
+  display: grid;
+  gap: 14px;
+}
+
+.draft-question-card {
+  padding: 18px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.draft-form-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.draft-form-full {
+  grid-column: 1 / -1;
 }
 
 .form-grid {
@@ -255,7 +284,12 @@ button {
 
 .form-grid select,
 .form-grid input,
-.answer-form textarea {
+.answer-form textarea,
+.upload-form input,
+.upload-form textarea,
+.draft-form-grid input,
+.draft-form-grid select,
+.draft-form-grid textarea {
   padding: 14px 16px;
   border-radius: 18px;
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -493,7 +527,8 @@ button {
   .card-grid,
   .report-columns,
   .score-grid,
-  .form-grid {
+  .form-grid,
+  .draft-form-grid {
     grid-template-columns: 1fr;
   }
 

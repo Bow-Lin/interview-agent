@@ -53,6 +53,21 @@ class StubLLMClient:
             "summary": f"{role} report",
         }
 
+    async def parse_question_bank_text(self, *, settings, role: str, qa_pairs):
+        return {
+            "questions": [
+                {
+                    "question_text": pair["question"],
+                    "level": "mid",
+                    "expected_points": [f"{role} concept", "tradeoffs", "examples"],
+                    "tags": [role, "generated"],
+                    "reference_answer": pair["answer"],
+                    "warnings": [],
+                }
+                for pair in qa_pairs
+            ]
+        }
+
 
 class StubSpeechTranscriber:
     def __init__(self) -> None:
@@ -528,6 +543,92 @@ class SessionApiTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("Invalid role", response.json()["detail"])
+
+    async def test_import_question_set_rejects_non_object_json_root(self) -> None:
+        response = await self.client.post(
+            "/question-sets/import",
+            files={"file": ("broken-pack.json", json.dumps([]).encode("utf-8"), "application/json")},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("must be a JSON object", response.json()["detail"])
+
+    async def test_parse_text_returns_editable_question_bank_draft(self) -> None:
+        await self.configure_llm()
+
+        response = await self.client.post(
+            "/question-sets/parse-text",
+            json={
+                "name": "Agent Text Pack",
+                "role": "agent_engineer",
+                "source_text": (
+                    "Q: What is an AI agent?\n"
+                    "A: It can choose actions based on context.\n\n"
+                    "Q: When should you avoid using an agent?\n"
+                    "A: When a deterministic workflow is enough."
+                ),
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["name"], "Agent Text Pack")
+        self.assertEqual(body["role"], "agent_engineer")
+        self.assertEqual(len(body["questions"]), 2)
+        self.assertEqual(body["questions"][0]["question_text"], "What is an AI agent?")
+        self.assertEqual(body["questions"][0]["level"], "mid")
+        self.assertEqual(
+            body["questions"][0]["reference_answer"],
+            "It can choose actions based on context.",
+        )
+
+    async def test_parse_text_rejects_non_qa_content(self) -> None:
+        await self.configure_llm()
+
+        response = await self.client.post(
+            "/question-sets/parse-text",
+            json={
+                "name": "Broken Text Pack",
+                "role": "agent_engineer",
+                "source_text": "This is only a paragraph without Q and A markers.",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("QA-style", response.json()["detail"])
+
+    async def test_from_draft_creates_new_question_set(self) -> None:
+        await self.configure_llm()
+
+        response = await self.client.post(
+            "/question-sets/from-draft",
+            json={
+                "name": "Drafted Backend Pack",
+                "role": "backend_engineer",
+                "questions": [
+                    {
+                        "draft_id": "draft-1",
+                        "question_text": "How do you handle retries safely?",
+                        "level": "mid",
+                        "expected_points": ["idempotency", "backoff", "timeouts"],
+                        "tags": ["reliability"],
+                        "reference_answer": "Use idempotency, backoff, and bounded retries.",
+                        "source_question": "How do you handle retries safely?",
+                        "source_answer": "Use idempotency, backoff, and bounded retries.",
+                        "warnings": [],
+                    }
+                ],
+            },
+        )
+
+        self.assertEqual(response.status_code, 201)
+        body = response.json()
+        self.assertEqual(body["name"], "Drafted Backend Pack")
+        self.assertEqual(body["question_count"], 1)
+
+        listed = await self.client.get("/question-sets")
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(listed.json()["question_sets"][-1]["name"], "Drafted Backend Pack")
 
     async def test_create_session_uses_selected_question_set(self) -> None:
         await self.configure_llm()

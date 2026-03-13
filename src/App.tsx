@@ -77,6 +77,24 @@ type QuestionSetSummary = {
   question_count: number;
 };
 
+type QuestionDraft = {
+  draft_id: string;
+  question_text: string;
+  level: Level;
+  expected_points: string[];
+  tags: string[];
+  reference_answer: string;
+  source_question: string;
+  source_answer: string;
+  warnings: string[];
+};
+
+type QuestionSetDraft = {
+  name: string;
+  role: Role;
+  questions: QuestionDraft[];
+};
+
 type LLMSettingsState = {
   configured: boolean;
   provider: Provider;
@@ -307,7 +325,12 @@ export default function App() {
   const [interimTranscript, setInterimTranscript] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [questionBankUploadOpen, setQuestionBankUploadOpen] = useState(false);
+  const [questionBankTextOpen, setQuestionBankTextOpen] = useState(false);
   const [questionBankFile, setQuestionBankFile] = useState<File | null>(null);
+  const [questionBankDraftName, setQuestionBankDraftName] = useState("");
+  const [questionBankSourceText, setQuestionBankSourceText] = useState("");
+  const [questionBankTextFile, setQuestionBankTextFile] = useState<File | null>(null);
+  const [questionBankDraft, setQuestionBankDraft] = useState<QuestionSetDraft | null>(null);
   const [pendingConfigRedirect, setPendingConfigRedirect] = useState(false);
   const [llmSettings, setLlmSettings] = useState<LLMSettingsState>({
     configured: false,
@@ -487,6 +510,102 @@ export default function App() {
     } catch (requestError) {
       setError(
         requestError instanceof Error ? requestError.message : "Failed to import question bank.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function parseQuestionBankText() {
+    const trimmedName = questionBankDraftName.trim();
+    if (!trimmedName) {
+      setError("Question bank name is required before parsing.");
+      return;
+    }
+
+    const sourceText =
+      questionBankSourceText.trim() || (questionBankTextFile ? (await questionBankTextFile.text()).trim() : "");
+    if (!sourceText) {
+      setError("Provide QA-style text or upload a txt/md file before parsing.");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    setQuestionBankDraft(null);
+    try {
+      const draft = await apiRequest<QuestionSetDraft>("/question-sets/parse-text", {
+        method: "POST",
+        body: JSON.stringify({
+          name: trimmedName,
+          role: config.role,
+          source_text: sourceText,
+        }),
+      });
+      setQuestionBankDraft(draft);
+      if (!questionBankSourceText.trim()) {
+        setQuestionBankSourceText(sourceText);
+      }
+    } catch (requestError) {
+      setQuestionBankDraft(null);
+      setError(
+        requestError instanceof Error ? requestError.message : "Failed to parse question bank text.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function updateDraftQuestion(
+    draftId: string,
+    updater: (question: QuestionDraft) => QuestionDraft,
+  ) {
+    setQuestionBankDraft((previous) => {
+      if (!previous) {
+        return previous;
+      }
+      return {
+        ...previous,
+        questions: previous.questions.map((question) =>
+          question.draft_id === draftId ? updater(question) : question,
+        ),
+      };
+    });
+  }
+
+  async function importQuestionBankDraft() {
+    if (!questionBankDraft) {
+      setError("Parse text into a draft before importing.");
+      return;
+    }
+
+    const importName = questionBankDraftName.trim() || questionBankDraft.name;
+    const importRole = config.role;
+
+    setBusy(true);
+    setError(null);
+    try {
+      const imported = await apiRequest<QuestionSetSummary>("/question-sets/from-draft", {
+        method: "POST",
+        body: JSON.stringify({
+          ...questionBankDraft,
+          name: importName,
+          role: importRole,
+        }),
+      });
+      await loadQuestionSets();
+      setConfig((previous) => ({
+        ...previous,
+        question_set_id: imported.id,
+      }));
+      setQuestionBankDraft(null);
+      setQuestionBankDraftName("");
+      setQuestionBankSourceText("");
+      setQuestionBankTextFile(null);
+      setQuestionBankTextOpen(false);
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error ? requestError.message : "Failed to import draft question bank.",
       );
     } finally {
       setBusy(false);
@@ -927,6 +1046,11 @@ export default function App() {
     setDisplayRemainingSeconds(null);
     setAnswer("");
     setTranscript([]);
+    setQuestionBankUploadOpen(false);
+    setQuestionBankTextOpen(false);
+    setQuestionBankFile(null);
+    setQuestionBankTextFile(null);
+    setQuestionBankDraft(null);
   }
 
   return (
@@ -1037,12 +1161,21 @@ export default function App() {
                 <span>Role</span>
                 <select
                   value={config.role}
-                  onChange={(event) =>
+                  onChange={(event) => {
+                    const nextRole = event.target.value as Role;
                     setConfig((previous) => ({
                       ...previous,
-                      role: event.target.value as Role,
-                    }))
-                  }
+                      role: nextRole,
+                    }));
+                    setQuestionBankDraft((previous) =>
+                      previous
+                        ? {
+                            ...previous,
+                            role: nextRole,
+                          }
+                        : previous,
+                    );
+                  }}
                 >
                   <option value="agent_engineer">Agent Engineer</option>
                   <option value="backend_engineer">Backend Engineer</option>
@@ -1103,16 +1236,25 @@ export default function App() {
                 <div>
                   <h3>Custom question bank</h3>
                   <p className="muted-copy">
-                    Import a JSON question bank and use it in the next interview.
+                    Import JSON directly or generate a draft from QA-style text before importing.
                   </p>
                 </div>
-                <button
-                  className="ghost-button"
-                  onClick={() => setQuestionBankUploadOpen((previous) => !previous)}
-                  type="button"
-                >
-                  Upload Question Bank
-                </button>
+                <div className="button-row">
+                  <button
+                    className="ghost-button"
+                    onClick={() => setQuestionBankUploadOpen((previous) => !previous)}
+                    type="button"
+                  >
+                    Upload Question Bank
+                  </button>
+                  <button
+                    className="ghost-button"
+                    onClick={() => setQuestionBankTextOpen((previous) => !previous)}
+                    type="button"
+                  >
+                    Generate from Text
+                  </button>
+                </div>
               </div>
 
               {questionBankUploadOpen ? (
@@ -1136,6 +1278,174 @@ export default function App() {
                       type="button"
                     >
                       {busy ? "Importing..." : "Import Question Bank"}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {questionBankTextOpen ? (
+                <div className="upload-form text-draft-form">
+                  <label>
+                    <span>Question Bank Name</span>
+                    <input
+                      onChange={(event) => {
+                        const nextName = event.target.value;
+                        setQuestionBankDraftName(nextName);
+                        setQuestionBankDraft((previous) =>
+                          previous
+                            ? {
+                                ...previous,
+                                name: nextName,
+                              }
+                            : previous,
+                        );
+                      }}
+                      type="text"
+                      value={questionBankDraftName}
+                    />
+                  </label>
+                  <label>
+                    <span>Source Text</span>
+                    <textarea
+                      onChange={(event) => setQuestionBankSourceText(event.target.value)}
+                      rows={8}
+                      value={questionBankSourceText}
+                    />
+                  </label>
+                  <label>
+                    <span>Text File</span>
+                    <input
+                      accept=".txt,.md,text/plain,text/markdown"
+                      onChange={(event) => setQuestionBankTextFile(event.target.files?.[0] ?? null)}
+                      type="file"
+                    />
+                  </label>
+                  <p className="muted-copy">
+                    Supported format: QA-style text with clear `Q:` / `A:` pairs. The current
+                    role selection is used for the generated draft.
+                  </p>
+                  <div className="button-row">
+                    <button
+                      className="action-button"
+                      disabled={busy}
+                      onClick={() => void parseQuestionBankText()}
+                      type="button"
+                    >
+                      {busy ? "Parsing..." : "Parse to Draft"}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {questionBankDraft ? (
+                <div className="draft-preview">
+                  <div className="section-heading upload-heading">
+                    <div>
+                      <h3>Draft Preview</h3>
+                      <p className="muted-copy">
+                        Review the extracted questions before importing them as a new question bank.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="draft-question-list">
+                    {questionBankDraft.questions.map((question, index) => (
+                      <section className="draft-question-card" key={question.draft_id}>
+                        <div className="section-heading upload-heading">
+                          <strong>Question {index + 1}</strong>
+                          <span className="score-pill">{question.level.toUpperCase()}</span>
+                        </div>
+                        <div className="draft-form-grid">
+                          <label>
+                            <span>Question</span>
+                            <input
+                              onChange={(event) =>
+                                updateDraftQuestion(question.draft_id, (previous) => ({
+                                  ...previous,
+                                  question_text: event.target.value,
+                                }))
+                              }
+                              type="text"
+                              value={question.question_text}
+                            />
+                          </label>
+                          <label>
+                            <span>Level</span>
+                            <select
+                              onChange={(event) =>
+                                updateDraftQuestion(question.draft_id, (previous) => ({
+                                  ...previous,
+                                  level: event.target.value as Level,
+                                }))
+                              }
+                              value={question.level}
+                            >
+                              <option value="junior">Junior</option>
+                              <option value="mid">Mid</option>
+                              <option value="senior">Senior</option>
+                            </select>
+                          </label>
+                          <label className="draft-form-full">
+                            <span>Expected Points</span>
+                            <input
+                              onChange={(event) =>
+                                updateDraftQuestion(question.draft_id, (previous) => ({
+                                  ...previous,
+                                  expected_points: event.target.value
+                                    .split(",")
+                                    .map((item) => item.trim())
+                                    .filter(Boolean),
+                                }))
+                              }
+                              type="text"
+                              value={question.expected_points.join(", ")}
+                            />
+                          </label>
+                          <label className="draft-form-full">
+                            <span>Tags</span>
+                            <input
+                              onChange={(event) =>
+                                updateDraftQuestion(question.draft_id, (previous) => ({
+                                  ...previous,
+                                  tags: event.target.value
+                                    .split(",")
+                                    .map((item) => item.trim())
+                                    .filter(Boolean),
+                                }))
+                              }
+                              type="text"
+                              value={question.tags.join(", ")}
+                            />
+                          </label>
+                          <label className="draft-form-full">
+                            <span>Reference Answer</span>
+                            <textarea
+                              onChange={(event) =>
+                                updateDraftQuestion(question.draft_id, (previous) => ({
+                                  ...previous,
+                                  reference_answer: event.target.value,
+                                }))
+                              }
+                              rows={4}
+                              value={question.reference_answer}
+                            />
+                          </label>
+                        </div>
+                        {question.warnings.length > 0 ? (
+                          <p className="muted-copy">Warnings: {question.warnings.join(", ")}</p>
+                        ) : null}
+                      </section>
+                    ))}
+                  </div>
+
+                  <div className="button-row">
+                    <button
+                      className="action-button"
+                      disabled={busy}
+                      onClick={() => void importQuestionBankDraft()}
+                      type="button"
+                    >
+                      {busy ? "Importing..." : "Import Draft as New Question Bank"}
                     </button>
                   </div>
                 </div>

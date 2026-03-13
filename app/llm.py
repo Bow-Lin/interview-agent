@@ -64,6 +64,15 @@ class LLMClient(Protocol):
     ) -> Dict[str, Any]:
         ...
 
+    async def parse_question_bank_text(
+        self,
+        *,
+        settings: LLMSettings,
+        role: str,
+        qa_pairs: List[Dict[str, str]],
+    ) -> Dict[str, Any]:
+        ...
+
 
 class OpenAICompatibleLLMClient:
     def __init__(self, timeout: float = 30.0) -> None:
@@ -163,6 +172,30 @@ class OpenAICompatibleLLMClient:
             "suggestions": self._ensure_list(payload.get("suggestions")),
             "summary": str(payload.get("summary", "")).strip(),
         }
+
+    async def parse_question_bank_text(
+        self,
+        *,
+        settings: LLMSettings,
+        role: str,
+        qa_pairs: List[Dict[str, str]],
+    ) -> Dict[str, Any]:
+        return await self._chat_json(
+            settings=settings,
+            system_prompt=(
+                "You convert QA pairs into an interview question bank draft. "
+                "Return only valid JSON with one key: questions. "
+                "questions must be an array with the same length and order as the provided QA pairs. "
+                "Each item must contain: question_text, level, expected_points, tags, reference_answer, warnings. "
+                "level must be one of junior, mid, senior. "
+                "reference_answer should stay close to the original answer rather than being fully rewritten."
+            ),
+            user_prompt=(
+                f"Role: {role}\n"
+                f"QA pairs: {json.dumps(qa_pairs, ensure_ascii=True)}\n"
+                "Extract an interview draft from these QA pairs. Do not invent extra questions."
+            ),
+        )
 
     async def _chat_json(
         self, *, settings: LLMSettings, system_prompt: str, user_prompt: str

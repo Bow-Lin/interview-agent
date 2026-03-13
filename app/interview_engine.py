@@ -303,7 +303,86 @@ class InterviewEngine:
     def list_question_sets(self) -> List[Dict[str, Any]]:
         return self.database.list_question_sets()
 
-    def import_question_set(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def parse_question_set_text(
+        self, *, name: str, role: str, source_text: str
+    ) -> Dict[str, Any]:
+        llm_settings = self._require_llm_settings()
+        normalized_name = name.strip()
+        if not normalized_name:
+            raise ValueError("Question bank name is required")
+        normalized_role = role.strip()
+        if normalized_role not in VALID_ROLES:
+            raise ValueError(f"Invalid role '{normalized_role}'")
+        qa_pairs = self._extract_qa_pairs(source_text)
+        payload = await self.llm_client.parse_question_bank_text(
+            settings=llm_settings,
+            role=normalized_role,
+            qa_pairs=qa_pairs,
+        )
+        if not isinstance(payload, dict):
+            raise ValueError("LLM parse response must be a JSON object")
+
+        raw_questions = payload.get("questions")
+        if not isinstance(raw_questions, list) or len(raw_questions) != len(qa_pairs):
+            raise ValueError("LLM parse response must return one question per QA pair")
+
+        draft_questions: List[Dict[str, Any]] = []
+        for index, (pair, raw_question) in enumerate(zip(qa_pairs, raw_questions), start=1):
+            if not isinstance(raw_question, dict):
+                raise ValueError(f"Draft question #{index} must be an object")
+
+            question_text = str(raw_question.get("question_text", "")).strip() or pair["question"]
+            level = str(raw_question.get("level", "")).strip()
+            if level not in VALID_LEVELS:
+                raise ValueError(f"Draft question #{index} returned invalid level '{level}'")
+
+            expected_points = raw_question.get("expected_points")
+            if (
+                not isinstance(expected_points, list)
+                or not expected_points
+                or not all(isinstance(point, str) and point.strip() for point in expected_points)
+            ):
+                raise ValueError(
+                    f"Draft question #{index} must include a non-empty expected_points array"
+                )
+
+            tags = raw_question.get("tags", [])
+            if not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags):
+                raise ValueError(f"Draft question #{index} must include a tags string array")
+
+            reference_answer = (
+                str(raw_question.get("reference_answer", "")).strip() or pair["answer"]
+            )
+            if not reference_answer:
+                raise ValueError(f"Draft question #{index} is missing reference_answer")
+
+            warnings = raw_question.get("warnings", [])
+            if not isinstance(warnings, list) or not all(isinstance(item, str) for item in warnings):
+                raise ValueError(f"Draft question #{index} must include a warnings string array")
+
+            draft_questions.append(
+                {
+                    "draft_id": f"draft-{index}",
+                    "question_text": question_text,
+                    "level": level,
+                    "expected_points": [point.strip() for point in expected_points],
+                    "tags": [tag.strip() for tag in tags if tag.strip()],
+                    "reference_answer": reference_answer,
+                    "source_question": pair["question"],
+                    "source_answer": pair["answer"],
+                    "warnings": [warning.strip() for warning in warnings if warning.strip()],
+                }
+            )
+
+        return {
+            "name": normalized_name,
+            "role": normalized_role,
+            "questions": draft_questions,
+        }
+
+    def import_question_set(self, payload: Any) -> Dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise ValueError("Question bank payload must be a JSON object")
         name = str(payload.get("name", "")).strip()
         if not name:
             raise ValueError("Question bank name is required")
@@ -369,6 +448,67 @@ class InterviewEngine:
 
         return self.database.create_question_set(name, normalized_questions)
 
+    def import_question_set_draft(self, payload: Any) -> Dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise ValueError("Question bank draft payload must be a JSON object")
+
+        name = str(payload.get("name", "")).strip()
+        if not name:
+            raise ValueError("Question bank name is required")
+
+        role = str(payload.get("role", "")).strip()
+        if role not in VALID_ROLES:
+            raise ValueError(f"Invalid role '{role}'")
+
+        raw_questions = payload.get("questions")
+        if not isinstance(raw_questions, list) or not raw_questions:
+            raise ValueError("Question bank draft must include at least one question")
+
+        normalized_questions: List[Dict[str, Any]] = []
+        for index, raw_question in enumerate(raw_questions, start=1):
+            if not isinstance(raw_question, dict):
+                raise ValueError(f"Draft question #{index} must be an object")
+
+            question_text = str(raw_question.get("question_text", "")).strip()
+            if not question_text:
+                raise ValueError(f"Draft question #{index} is missing question_text")
+
+            level = str(raw_question.get("level", "")).strip()
+            if level not in VALID_LEVELS:
+                raise ValueError(f"Draft question #{index} returned invalid level '{level}'")
+
+            reference_answer = str(raw_question.get("reference_answer", "")).strip()
+            if not reference_answer:
+                raise ValueError(f"Draft question #{index} is missing reference_answer")
+
+            expected_points = raw_question.get("expected_points")
+            if (
+                not isinstance(expected_points, list)
+                or not expected_points
+                or not all(isinstance(point, str) and point.strip() for point in expected_points)
+            ):
+                raise ValueError(
+                    f"Draft question #{index} must include a non-empty expected_points array"
+                )
+
+            tags = raw_question.get("tags", [])
+            if not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags):
+                raise ValueError(f"Draft question #{index} must include a tags string array")
+
+            normalized_questions.append(
+                {
+                    "id": f"generated_{index:03d}",
+                    "role": role,
+                    "level": level,
+                    "question_text": question_text,
+                    "expected_points": [point.strip() for point in expected_points],
+                    "tags": [tag.strip() for tag in tags if tag.strip()],
+                    "reference_answer": reference_answer,
+                }
+            )
+
+        return self.database.create_question_set(name, normalized_questions)
+
     def _build_current_prompt(self, session: Any) -> Dict[str, Any]:
         selected_question_ids = json.loads(session["selected_question_ids"])
         question_id = selected_question_ids[session["current_question_index"]]
@@ -418,6 +558,62 @@ class InterviewEngine:
         if raw_settings is None:
             raise ValueError("LLM settings are not configured")
         return LLMSettings(**raw_settings)
+
+    @staticmethod
+    def _extract_qa_pairs(source_text: str) -> List[Dict[str, str]]:
+        question_pattern = re.compile(r"^\s*(?:[-*]\s*)?(?:q|question)\s*[:：\-]\s*(.+)$", re.IGNORECASE)
+        answer_pattern = re.compile(r"^\s*(?:[-*]\s*)?(?:a|answer)\s*[:：\-]\s*(.+)$", re.IGNORECASE)
+
+        pairs: List[Dict[str, str]] = []
+        current_question = ""
+        current_answer_lines: List[str] = []
+        mode: Optional[str] = None
+
+        for raw_line in source_text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                if mode == "answer" and current_answer_lines:
+                    current_answer_lines.append("")
+                continue
+
+            question_match = question_pattern.match(line)
+            if question_match:
+                if current_question and current_answer_lines:
+                    pairs.append(
+                        {
+                            "question": current_question.strip(),
+                            "answer": " ".join(part for part in current_answer_lines if part).strip(),
+                        }
+                    )
+                current_question = question_match.group(1).strip()
+                current_answer_lines = []
+                mode = "question"
+                continue
+
+            answer_match = answer_pattern.match(line)
+            if answer_match:
+                if not current_question:
+                    continue
+                current_answer_lines = [answer_match.group(1).strip()]
+                mode = "answer"
+                continue
+
+            if mode == "question" and current_question:
+                current_question = f"{current_question} {line}".strip()
+            elif mode == "answer" and current_question:
+                current_answer_lines.append(line)
+
+        if current_question and current_answer_lines:
+            pairs.append(
+                {
+                    "question": current_question.strip(),
+                    "answer": " ".join(part for part in current_answer_lines if part).strip(),
+                }
+            )
+
+        if not pairs:
+            raise ValueError("Provide QA-style text with clear Q:/A: pairs.")
+        return pairs
 
     def _sync_remaining_seconds(self, session: Any) -> int:
         if session["status"] != "in_progress":

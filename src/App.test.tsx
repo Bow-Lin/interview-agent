@@ -23,6 +23,22 @@ type MockFetchOptions = {
     status: string;
     question_count: number;
   };
+  parsedDraft?: {
+    name: string;
+    role: string;
+    questions: Array<{
+      draft_id: string;
+      question_text: string;
+      level: string;
+      expected_points: string[];
+      tags: string[];
+      reference_answer: string;
+      source_question: string;
+      source_answer: string;
+      warnings: string[];
+    }>;
+  };
+  parseTextError?: string | null;
   sessions?: Array<{
     session_id: string;
     role: string;
@@ -159,6 +175,24 @@ function mockFetch({
     status: "ready",
     question_count: 3,
   },
+  parsedDraft = {
+    name: "Generated Agent Pack",
+    role: "agent_engineer",
+    questions: [
+      {
+        draft_id: "draft-1",
+        question_text: "What is an AI agent?",
+        level: "mid",
+        expected_points: ["autonomy", "tools", "state"],
+        tags: ["agents"],
+        reference_answer: "It chooses actions based on context.",
+        source_question: "What is an AI agent?",
+        source_answer: "It chooses actions based on context.",
+        warnings: [],
+      },
+    ],
+  },
+  parseTextError = null,
   sessions = [],
   createSessionResponse,
   transcriptionText = "transcribed answer",
@@ -202,6 +236,27 @@ function mockFetch({
       }
 
       if (url.endsWith("/question-sets/import") && init?.method === "POST") {
+        questionSetState.push(importedQuestionSet);
+        return Promise.resolve({
+          ok: true,
+          json: async () => importedQuestionSet,
+        });
+      }
+
+      if (url.endsWith("/question-sets/parse-text") && init?.method === "POST") {
+        if (parseTextError) {
+          return Promise.resolve({
+            ok: false,
+            text: async () => parseTextError,
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          json: async () => parsedDraft,
+        });
+      }
+
+      if (url.endsWith("/question-sets/from-draft") && init?.method === "POST") {
         questionSetState.push(importedQuestionSet);
         return Promise.resolve({
           ok: true,
@@ -366,6 +421,201 @@ describe("App", () => {
     );
     expect(sessionRequest).toBeTruthy();
     expect(JSON.parse(String(sessionRequest?.[1]?.body)).question_set_id).toBe("upload-pack-1");
+  });
+
+  it("parses QA text into a draft and imports it as a new question bank", async () => {
+    const fetchSpy = mockFetch({
+      importedQuestionSet: {
+        id: "generated-pack-1",
+        name: "Generated Agent Pack",
+        source_type: "upload",
+        status: "ready",
+        question_count: 1,
+      },
+    });
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Start Mock Interview" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Generate from Text" }));
+
+    fireEvent.change(await screen.findByLabelText("Question Bank Name"), {
+      target: { value: "Generated Agent Pack" },
+    });
+    fireEvent.change(screen.getByLabelText("Source Text"), {
+      target: {
+        value:
+          "Q: What is an AI agent?\nA: It chooses actions based on context.",
+      },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Parse to Draft" }));
+
+    expect(await screen.findByText("Draft Preview")).toBeTruthy();
+    expect(screen.getByDisplayValue("What is an AI agent?")).toBeTruthy();
+    expect(screen.getByDisplayValue("It chooses actions based on context.")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Import Draft as New Question Bank" }));
+
+    await screen.findByRole("option", { name: "Generated Agent Pack" });
+
+    const questionBankSelect = screen.getByLabelText("Question Bank") as HTMLSelectElement;
+    expect(questionBankSelect.value).toBe("generated-pack-1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Begin Interview" }));
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const sessionRequest = fetchSpy.mock.calls.find(
+      ([input, init]) => String(input).endsWith("/sessions") && init?.method === "POST",
+    );
+    expect(sessionRequest).toBeTruthy();
+    expect(JSON.parse(String(sessionRequest?.[1]?.body)).question_set_id).toBe("generated-pack-1");
+  });
+
+  it("clears the previous draft when a new parse fails", async () => {
+    const fetchSpy = mockFetch();
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Start Mock Interview" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Generate from Text" }));
+
+    fireEvent.change(await screen.findByLabelText("Question Bank Name"), {
+      target: { value: "Generated Agent Pack" },
+    });
+    fireEvent.change(screen.getByLabelText("Source Text"), {
+      target: {
+        value: "Q: What is an AI agent?\nA: It chooses actions based on context.",
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Parse to Draft" }));
+
+    expect(await screen.findByText("Draft Preview")).toBeTruthy();
+
+    fetchSpy.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/history")) {
+        return Promise.resolve({ ok: true, json: async () => ({ sessions: [] }) });
+      }
+      if (url.endsWith("/settings/llm")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            configured: true,
+            provider: "openai_compatible",
+            base_url: "https://api.openai.com/v1",
+            model: "gpt-test",
+            api_key_set: true,
+          }),
+        });
+      }
+      if (url.endsWith("/settings/speech")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ mode: "browser", whisper_model: "small" }),
+        });
+      }
+      if (url.endsWith("/question-sets")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            question_sets: [
+              {
+                id: "built_in_default",
+                name: "Built-in Question Bank",
+                source_type: "system",
+                status: "ready",
+                question_count: 12,
+              },
+            ],
+          }),
+        });
+      }
+      if (url.endsWith("/question-sets/parse-text") && init?.method === "POST") {
+        return Promise.resolve({
+          ok: false,
+          text: async () => "Provide QA-style text with clear Q:/A: pairs.",
+        });
+      }
+      throw new Error(`Unhandled fetch request: ${url}`);
+    });
+
+    fireEvent.change(screen.getByLabelText("Source Text"), {
+      target: { value: "This is not QA content." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Parse to Draft" }));
+
+    expect(await screen.findByText("Provide QA-style text with clear Q:/A: pairs.")).toBeTruthy();
+    expect(screen.queryByText("Draft Preview")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Import Draft as New Question Bank" })).toBeNull();
+  });
+
+  it("imports a draft using the current role and current bank name", async () => {
+    const fetchSpy = mockFetch({
+      importedQuestionSet: {
+        id: "generated-backend-pack",
+        name: "Renamed Backend Pack",
+        source_type: "upload",
+        status: "ready",
+        question_count: 1,
+      },
+      parsedDraft: {
+        name: "Generated Agent Pack",
+        role: "agent_engineer",
+        questions: [
+          {
+            draft_id: "draft-1",
+            question_text: "What is an AI agent?",
+            level: "mid",
+            expected_points: ["autonomy", "tools", "state"],
+            tags: ["agents"],
+            reference_answer: "It chooses actions based on context.",
+            source_question: "What is an AI agent?",
+            source_answer: "It chooses actions based on context.",
+            warnings: [],
+          },
+        ],
+      },
+    });
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Start Mock Interview" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Generate from Text" }));
+
+    fireEvent.change(await screen.findByLabelText("Question Bank Name"), {
+      target: { value: "Generated Agent Pack" },
+    });
+    fireEvent.change(screen.getByLabelText("Source Text"), {
+      target: {
+        value: "Q: What is an AI agent?\nA: It chooses actions based on context.",
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Parse to Draft" }));
+    expect(await screen.findByText("Draft Preview")).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Question Bank Name"), {
+      target: { value: "Renamed Backend Pack" },
+    });
+    fireEvent.change(screen.getByLabelText("Role"), {
+      target: { value: "backend_engineer" },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Import Draft as New Question Bank" }));
+      await Promise.resolve();
+    });
+
+    const importDraftRequest = fetchSpy.mock.calls.find(
+      ([input, init]) => String(input).endsWith("/question-sets/from-draft") && init?.method === "POST",
+    );
+    expect(importDraftRequest).toBeTruthy();
+    const importDraftBody = JSON.parse(String(importDraftRequest?.[1]?.body));
+    expect(importDraftBody.name).toBe("Renamed Backend Pack");
+    expect(importDraftBody.role).toBe("backend_engineer");
   });
 
   it("opens settings instead of interview config when provider is not configured", async () => {

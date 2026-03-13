@@ -16,7 +16,9 @@ from app.schemas import (
     HistoryResponse,
     LLMSettingsRequest,
     LLMSettingsResponse,
+    QuestionSetDraft,
     QuestionSetListResponse,
+    QuestionSetParseRequest,
     QuestionSetSummary,
     SpeechSettingsRequest,
     SpeechSettingsResponse,
@@ -139,6 +141,24 @@ def create_app(testing: bool = False, llm_client=None, speech_transcriber=None) 
 
         try:
             return engine.import_question_set(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.post("/question-sets/parse-text", response_model=QuestionSetDraft)
+    async def parse_question_set_text(payload: QuestionSetParseRequest):
+        try:
+            return await engine.parse_question_set_text(
+                name=payload.name,
+                role=payload.role,
+                source_text=payload.source_text,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.post("/question-sets/from-draft", response_model=QuestionSetSummary, status_code=201)
+    async def create_question_set_from_draft(payload: QuestionSetDraft):
+        try:
+            return engine.import_question_set_draft(payload.model_dump())
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
 

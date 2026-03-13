@@ -44,6 +44,30 @@ class QuestionSetListResponse(BaseModel):
     question_sets: List[QuestionSetSummary]
 
 
+class QuestionSetParseRequest(BaseModel):
+    name: str = Field(..., min_length=1)
+    role: str = Field(..., min_length=1)
+    source_text: str = Field(..., min_length=1)
+
+
+class QuestionDraft(BaseModel):
+    draft_id: str
+    question_text: str
+    level: str
+    expected_points: List[str]
+    tags: List[str]
+    reference_answer: str
+    source_question: str
+    source_answer: str
+    warnings: List[str]
+
+
+class QuestionSetDraft(BaseModel):
+    name: str
+    role: str
+    questions: List[QuestionDraft]
+
+
 class SessionCreateRequest(BaseModel):
     question_set_id: str = Field(..., min_length=1)
     role: str
