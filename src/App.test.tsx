@@ -1,7 +1,8 @@
+import { useState } from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { vi } from "vitest";
 
-import App from "./App";
+import App, { DraftQuestionCard, InterviewView } from "./App";
 
 type MockFetchOptions = {
   configured?: boolean;
@@ -155,6 +156,25 @@ const mockMediaStream = {
     },
   ],
 } as unknown as MediaStream;
+
+function createDeferredResponse<T>(payload: T) {
+  let resolve: (() => void) | null = null;
+  const promise = new Promise<{
+    ok: true;
+    json: () => Promise<T>;
+  }>((resolver) => {
+    resolve = () =>
+      resolver({
+        ok: true,
+        json: async () => payload,
+      });
+  });
+
+  return {
+    promise,
+    resolve: () => resolve?.(),
+  };
+}
 
 function mockFetch({
   configured = true,
@@ -937,5 +957,236 @@ describe("App", () => {
       screen.getByText("Microphone permission was denied. Use text input instead."),
     ).toBeTruthy();
     expect(screen.getByRole("button", { name: "Start voice input" })).toBeTruthy();
+  });
+
+  it("starts saving llm and speech settings in parallel", async () => {
+    const llmUpdate = createDeferredResponse({
+      configured: true,
+      provider: "openai_compatible" as const,
+      base_url: "https://api.openai.com/v1",
+      model: "gpt-test",
+      api_key_set: true,
+    });
+    const speechUpdate = createDeferredResponse({
+      mode: "browser" as const,
+      whisper_model: "small",
+    });
+
+    const fetchSpy = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/history")) {
+        return Promise.resolve({ ok: true, json: async () => ({ sessions: [] }) });
+      }
+      if (url.endsWith("/question-sets")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            question_sets: [
+              {
+                id: "built_in_default",
+                name: "Built-in Question Bank",
+                source_type: "system",
+                status: "ready",
+                question_count: 12,
+              },
+            ],
+          }),
+        });
+      }
+      if (url.endsWith("/settings/llm")) {
+        if (init?.method === "PUT") {
+          return llmUpdate.promise;
+        }
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            configured: true,
+            provider: "openai_compatible",
+            base_url: "https://api.openai.com/v1",
+            model: "gpt-test",
+            api_key_set: true,
+          }),
+        });
+      }
+      if (url.endsWith("/settings/speech")) {
+        if (init?.method === "PUT") {
+          return speechUpdate.promise;
+        }
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ mode: "browser", whisper_model: "small" }),
+        });
+      }
+
+      throw new Error(`Unhandled fetch request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Settings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const putRequests = fetchSpy.mock.calls.filter(
+      ([input, init]) =>
+        init?.method === "PUT" &&
+        (String(input).endsWith("/settings/llm") || String(input).endsWith("/settings/speech")),
+    );
+    expect(putRequests).toHaveLength(2);
+
+    await act(async () => {
+      llmUpdate.resolve();
+      speechUpdate.resolve();
+      await Promise.all([llmUpdate.promise, speechUpdate.promise]);
+    });
+  });
+
+  it("avoids re-committing InterviewView when the parent rerenders with stable props", () => {
+    let questionIndexReads = 0;
+    const transcript = [
+      {
+        speaker: "agent" as const,
+        text: "Tell me about your last project.",
+        kind: "main_question" as const,
+      },
+    ];
+    const session = {
+      session_id: "session-1",
+      status: "in_progress",
+      question_limit: 3,
+      remaining_seconds: 600,
+      current_prompt: {
+        question_id: "q1",
+        question_text: "Tell me about your last project.",
+        prompt_type: "main_question" as const,
+      },
+    };
+    Object.defineProperty(session, "question_index", {
+      get() {
+        questionIndexReads += 1;
+        return 0;
+      },
+    });
+    const noop = vi.fn();
+
+    function Wrapper() {
+      const [count, setCount] = useState(0);
+      return (
+        <div>
+          <button onClick={() => setCount((previous) => previous + 1)} type="button">
+            bump {count}
+          </button>
+          <InterviewView
+            answer=""
+            busy={false}
+            configRole="agent_engineer"
+            displayRemainingSeconds={600}
+            interimTranscript=""
+            onAnswerChange={noop}
+            onFinishInterview={noop}
+            onStartVoiceInput={noop}
+            onStopVoiceInput={noop}
+            onSubmitAnswer={noop}
+            session={session}
+            speechMode="browser"
+            transcript={transcript}
+            voiceInputLanguage="zh-CN"
+            voiceInputMessage="Voice input is set to Chinese. Review the text before submitting."
+            voiceInputStatus="idle"
+            onVoiceLanguageChange={noop}
+          />
+        </div>
+      );
+    }
+
+    render(<Wrapper />);
+    expect(questionIndexReads).toBe(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "bump 0" }));
+
+    expect(questionIndexReads).toBe(1);
+  });
+
+  it("avoids re-committing an unchanged draft card when a sibling question updates", () => {
+    let secondQuestionTextReads = 0;
+
+    function Wrapper() {
+      const [questions, setQuestions] = useState(() => {
+        const secondQuestion = {
+          draft_id: "draft-2",
+          level: "senior" as const,
+          expected_points: ["offline evals"],
+          tags: ["evaluation"],
+          reference_answer: "Measure reliability and task success.",
+          source_question: "How do you evaluate an agent?",
+          source_answer: "Measure reliability and task success.",
+          warnings: [],
+        };
+        Object.defineProperty(secondQuestion, "question_text", {
+          get() {
+            secondQuestionTextReads += 1;
+            return "How do you evaluate an agent?";
+          },
+        });
+
+        return [
+          {
+            draft_id: "draft-1",
+            question_text: "What is an AI agent?",
+            level: "mid" as const,
+            expected_points: ["autonomy"],
+            tags: ["agents"],
+            reference_answer: "It chooses actions based on context.",
+            source_question: "What is an AI agent?",
+            source_answer: "It chooses actions based on context.",
+            warnings: [],
+          },
+          secondQuestion,
+        ];
+      });
+
+      function handleDraftQuestionChange(draftId: string, updater: (question: (typeof questions)[number]) => (typeof questions)[number]) {
+        setQuestions((previous) =>
+          previous.map((question) => (question.draft_id === draftId ? updater(question) : question)),
+        );
+      }
+
+      return (
+        <div>
+          <button
+            onClick={() =>
+              handleDraftQuestionChange("draft-1", (previous) => ({
+                ...previous,
+                question_text: `${previous.question_text}!`,
+              }))
+            }
+            type="button"
+          >
+            update first
+          </button>
+          <DraftQuestionCard
+            index={0}
+            onQuestionChange={handleDraftQuestionChange}
+            question={questions[0]}
+          />
+          <DraftQuestionCard
+            index={1}
+            onQuestionChange={handleDraftQuestionChange}
+            question={questions[1]}
+          />
+        </div>
+      );
+    }
+
+    render(<Wrapper />);
+    expect(secondQuestionTextReads).toBe(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "update first" }));
+
+    expect(secondQuestionTextReads).toBe(1);
   });
 });

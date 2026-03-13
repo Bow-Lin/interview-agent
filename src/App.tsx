@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, memo, useEffect, useRef, useState } from "react";
 
 type Role = "agent_engineer" | "backend_engineer" | "frontend_engineer" | "algorithm_engineer";
 type Level = "junior" | "mid" | "senior";
@@ -305,6 +305,311 @@ async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+type InterviewViewProps = {
+  answer: string;
+  busy: boolean;
+  configRole: Role;
+  displayRemainingSeconds: number | null;
+  interimTranscript: string;
+  onAnswerChange: (value: string) => void;
+  onFinishInterview: () => void;
+  onStartVoiceInput: () => void;
+  onStopVoiceInput: () => void;
+  onSubmitAnswer: (event: FormEvent<HTMLFormElement>) => void;
+  onVoiceLanguageChange: (language: VoiceInputLanguage) => void;
+  session: SessionState;
+  speechMode: SpeechInputMode;
+  transcript: TranscriptTurn[];
+  voiceInputLanguage: VoiceInputLanguage;
+  voiceInputMessage: string;
+  voiceInputStatus: VoiceInputStatus;
+};
+
+type QuestionUpdateHandler = (
+  draftId: string,
+  updater: (question: QuestionDraft) => QuestionDraft,
+) => void;
+
+type DraftQuestionCardProps = {
+  index: number;
+  onQuestionChange: QuestionUpdateHandler;
+  question: QuestionDraft;
+};
+
+const TranscriptList = memo(
+  function TranscriptList({ transcript }: { transcript: TranscriptTurn[] }) {
+    return (
+      <ul className="transcript-list">
+        {transcript.map((turn, index) => (
+          <li key={`${turn.kind}-${index}`} className={`transcript-item ${turn.speaker}`}>
+            <span>{turn.speaker === "agent" ? "Agent" : "You"}</span>
+            <p>{turn.text}</p>
+          </li>
+        ))}
+      </ul>
+    );
+  },
+  (previousProps, nextProps) => previousProps.transcript === nextProps.transcript,
+);
+
+function InterviewViewComponent({
+  answer,
+  busy,
+  configRole,
+  displayRemainingSeconds,
+  interimTranscript,
+  onAnswerChange,
+  onFinishInterview,
+  onStartVoiceInput,
+  onStopVoiceInput,
+  onSubmitAnswer,
+  onVoiceLanguageChange,
+  session,
+  speechMode,
+  transcript,
+  voiceInputLanguage,
+  voiceInputMessage,
+  voiceInputStatus,
+}: InterviewViewProps) {
+  return (
+    <section className="card interview-card">
+      <div className="section-heading">
+        <div>
+          <h2>{formatRole(configRole)}</h2>
+          <p className="muted-copy">
+            Question {session.question_index + 1} of {session.question_limit}
+          </p>
+        </div>
+        <div className="status-cluster">
+          <span className="timer-chip">
+            {formatSeconds(displayRemainingSeconds ?? session.remaining_seconds)}
+          </span>
+          <button className="ghost-button" disabled={busy} onClick={() => void onFinishInterview()}>
+            Finish now
+          </button>
+        </div>
+      </div>
+
+      <article className="prompt-card">
+        <span className="prompt-tag">{formatPromptLabel(session.current_prompt.prompt_type)}</span>
+        <h3>{session.current_prompt.question_text}</h3>
+      </article>
+
+      <form className="answer-form" onSubmit={onSubmitAnswer}>
+        <label htmlFor="answer-box">Your answer</label>
+        <textarea
+          id="answer-box"
+          value={answer}
+          onChange={(event) => onAnswerChange(event.target.value)}
+          placeholder="Type your answer here..."
+          rows={7}
+        />
+        <div className="voice-input-panel">
+          <div className="voice-input-header">
+            <div>
+              <strong>Voice input</strong>
+              <p className="muted-copy">{voiceInputMessage}</p>
+            </div>
+            <button
+              className="ghost-button"
+              disabled={busy || voiceInputStatus === "unsupported" || voiceInputStatus === "stopping"}
+              onClick={() => (voiceInputStatus === "listening" ? onStopVoiceInput() : onStartVoiceInput())}
+              type="button"
+            >
+              {voiceInputStatus === "listening"
+                ? speechMode === "whisper"
+                  ? "Stop recording"
+                  : "Stop voice input"
+                : speechMode === "whisper"
+                  ? "Start recording"
+                  : "Start voice input"}
+            </button>
+          </div>
+          <div className="voice-language-row" role="group" aria-label="Voice input language">
+            <span className="muted-copy">{speechMode === "whisper" ? "Language hint" : "Language"}</span>
+            <div className="button-row">
+              <button
+                aria-pressed={voiceInputLanguage === "zh-CN"}
+                className={`ghost-button ${
+                  voiceInputLanguage === "zh-CN" ? "voice-language-button active" : "voice-language-button"
+                }`}
+                disabled={voiceInputStatus === "listening" || voiceInputStatus === "stopping"}
+                onClick={() => onVoiceLanguageChange("zh-CN")}
+                type="button"
+              >
+                中文
+              </button>
+              <button
+                aria-pressed={voiceInputLanguage === "en-US"}
+                className={`ghost-button ${
+                  voiceInputLanguage === "en-US" ? "voice-language-button active" : "voice-language-button"
+                }`}
+                disabled={voiceInputStatus === "listening" || voiceInputStatus === "stopping"}
+                onClick={() => onVoiceLanguageChange("en-US")}
+                type="button"
+              >
+                English
+              </button>
+            </div>
+          </div>
+          <div className="voice-input-meta">
+            <span className={`voice-status-chip ${voiceInputStatus}`}>
+              {voiceInputStatus === "unsupported"
+                ? "Unavailable"
+                : voiceInputStatus === "listening"
+                  ? "Listening..."
+                  : voiceInputStatus === "stopping"
+                    ? "Processing..."
+                    : voiceInputStatus === "error"
+                      ? "Retry available"
+                      : "Ready"}
+            </span>
+            {interimTranscript ? (
+              <p className="voice-preview">
+                Preview: <span>{interimTranscript}</span>
+              </p>
+            ) : null}
+          </div>
+        </div>
+        <div className="answer-actions">
+          <span className="muted-copy">Be concise, but cover missing details clearly.</span>
+          <button
+            className="action-button"
+            disabled={
+              busy ||
+              voiceInputStatus === "listening" ||
+              voiceInputStatus === "stopping" ||
+              !answer.trim()
+            }
+            type="submit"
+          >
+            {busy ? "Submitting..." : "Submit Answer"}
+          </button>
+        </div>
+      </form>
+
+      <section>
+        <div className="section-heading">
+          <h3>Conversation</h3>
+        </div>
+        <TranscriptList transcript={transcript} />
+      </section>
+    </section>
+  );
+}
+
+export const InterviewView = memo(
+  InterviewViewComponent,
+  (previousProps, nextProps) =>
+    previousProps.answer === nextProps.answer &&
+    previousProps.busy === nextProps.busy &&
+    previousProps.configRole === nextProps.configRole &&
+    previousProps.displayRemainingSeconds === nextProps.displayRemainingSeconds &&
+    previousProps.interimTranscript === nextProps.interimTranscript &&
+    previousProps.session === nextProps.session &&
+    previousProps.speechMode === nextProps.speechMode &&
+    previousProps.transcript === nextProps.transcript &&
+    previousProps.voiceInputLanguage === nextProps.voiceInputLanguage &&
+    previousProps.voiceInputMessage === nextProps.voiceInputMessage &&
+    previousProps.voiceInputStatus === nextProps.voiceInputStatus,
+);
+
+function DraftQuestionCardComponent({ index, onQuestionChange, question }: DraftQuestionCardProps) {
+  return (
+    <section className="draft-question-card">
+      <div className="section-heading upload-heading">
+        <strong>Question {index + 1}</strong>
+        <span className="score-pill">{question.level.toUpperCase()}</span>
+      </div>
+      <div className="draft-form-grid">
+        <label>
+          <span>Question</span>
+          <input
+            onChange={(event) =>
+              onQuestionChange(question.draft_id, (previous) => ({
+                ...previous,
+                question_text: event.target.value,
+              }))
+            }
+            type="text"
+            value={question.question_text}
+          />
+        </label>
+        <label>
+          <span>Level</span>
+          <select
+            onChange={(event) =>
+              onQuestionChange(question.draft_id, (previous) => ({
+                ...previous,
+                level: event.target.value as Level,
+              }))
+            }
+            value={question.level}
+          >
+            <option value="junior">Junior</option>
+            <option value="mid">Mid</option>
+            <option value="senior">Senior</option>
+          </select>
+        </label>
+        <label className="draft-form-full">
+          <span>Expected Points</span>
+          <input
+            onChange={(event) =>
+              onQuestionChange(question.draft_id, (previous) => ({
+                ...previous,
+                expected_points: event.target.value
+                  .split(",")
+                  .map((item) => item.trim())
+                  .filter(Boolean),
+              }))
+            }
+            type="text"
+            value={question.expected_points.join(", ")}
+          />
+        </label>
+        <label className="draft-form-full">
+          <span>Tags</span>
+          <input
+            onChange={(event) =>
+              onQuestionChange(question.draft_id, (previous) => ({
+                ...previous,
+                tags: event.target.value
+                  .split(",")
+                  .map((item) => item.trim())
+                  .filter(Boolean),
+              }))
+            }
+            type="text"
+            value={question.tags.join(", ")}
+          />
+        </label>
+        <label className="draft-form-full">
+          <span>Reference Answer</span>
+          <textarea
+            onChange={(event) =>
+              onQuestionChange(question.draft_id, (previous) => ({
+                ...previous,
+                reference_answer: event.target.value,
+              }))
+            }
+            rows={4}
+            value={question.reference_answer}
+          />
+        </label>
+      </div>
+      {question.warnings.length > 0 ? (
+        <p className="muted-copy">Warnings: {question.warnings.join(", ")}</p>
+      ) : null}
+    </section>
+  );
+}
+
+export const DraftQuestionCard = memo(
+  DraftQuestionCardComponent,
+  (previousProps, nextProps) =>
+    previousProps.index === nextProps.index && previousProps.question === nextProps.question,
+);
+
 export default function App() {
   const [view, setView] = useState<View>("home");
   const [history, setHistory] = useState<HistoryItem[]>([]);
@@ -416,17 +721,6 @@ export default function App() {
       stopVoiceInput(true);
     }
   }, [busy]);
-
-  const scoreLabel = useMemo(() => {
-    if (!report) {
-      return "";
-    }
-    return `${report.total_score} / 100`;
-  }, [report]);
-  const uploadedQuestionSets = useMemo(
-    () => questionSets.filter((questionSet) => questionSet.source_type === "upload"),
-    [questionSets],
-  );
 
   async function loadHistory() {
     try {
@@ -887,16 +1181,22 @@ export default function App() {
     setBusy(true);
     setError(null);
     try {
-      const payload = await apiRequest<{
-        configured: boolean;
-        provider: Provider;
-        base_url: string;
-        model: string;
-        api_key_set: boolean;
-      }>("/settings/llm", {
-        method: "PUT",
-        body: JSON.stringify(settingsForm),
-      });
+      const [payload, speechPayload] = await Promise.all([
+        apiRequest<{
+          configured: boolean;
+          provider: Provider;
+          base_url: string;
+          model: string;
+          api_key_set: boolean;
+        }>("/settings/llm", {
+          method: "PUT",
+          body: JSON.stringify(settingsForm),
+        }),
+        apiRequest<SpeechSettingsState>("/settings/speech", {
+          method: "PUT",
+          body: JSON.stringify(speechSettingsForm),
+        }),
+      ]);
       const nextState: LLMSettingsState = {
         configured: payload.configured,
         provider: payload.provider,
@@ -905,10 +1205,6 @@ export default function App() {
         api_key_set: payload.api_key_set,
       };
       setLlmSettings(nextState);
-      const speechPayload = await apiRequest<SpeechSettingsState>("/settings/speech", {
-        method: "PUT",
-        body: JSON.stringify(speechSettingsForm),
-      });
       setSpeechSettings(speechPayload);
       setSpeechSettingsForm(speechPayload);
       setSettingsForm((previous) => ({
@@ -1423,91 +1719,12 @@ export default function App() {
 
                   <div className="draft-question-list">
                     {questionBankDraft.questions.map((question, index) => (
-                      <section className="draft-question-card" key={question.draft_id}>
-                        <div className="section-heading upload-heading">
-                          <strong>Question {index + 1}</strong>
-                          <span className="score-pill">{question.level.toUpperCase()}</span>
-                        </div>
-                        <div className="draft-form-grid">
-                          <label>
-                            <span>Question</span>
-                            <input
-                              onChange={(event) =>
-                                updateDraftQuestion(question.draft_id, (previous) => ({
-                                  ...previous,
-                                  question_text: event.target.value,
-                                }))
-                              }
-                              type="text"
-                              value={question.question_text}
-                            />
-                          </label>
-                          <label>
-                            <span>Level</span>
-                            <select
-                              onChange={(event) =>
-                                updateDraftQuestion(question.draft_id, (previous) => ({
-                                  ...previous,
-                                  level: event.target.value as Level,
-                                }))
-                              }
-                              value={question.level}
-                            >
-                              <option value="junior">Junior</option>
-                              <option value="mid">Mid</option>
-                              <option value="senior">Senior</option>
-                            </select>
-                          </label>
-                          <label className="draft-form-full">
-                            <span>Expected Points</span>
-                            <input
-                              onChange={(event) =>
-                                updateDraftQuestion(question.draft_id, (previous) => ({
-                                  ...previous,
-                                  expected_points: event.target.value
-                                    .split(",")
-                                    .map((item) => item.trim())
-                                    .filter(Boolean),
-                                }))
-                              }
-                              type="text"
-                              value={question.expected_points.join(", ")}
-                            />
-                          </label>
-                          <label className="draft-form-full">
-                            <span>Tags</span>
-                            <input
-                              onChange={(event) =>
-                                updateDraftQuestion(question.draft_id, (previous) => ({
-                                  ...previous,
-                                  tags: event.target.value
-                                    .split(",")
-                                    .map((item) => item.trim())
-                                    .filter(Boolean),
-                                }))
-                              }
-                              type="text"
-                              value={question.tags.join(", ")}
-                            />
-                          </label>
-                          <label className="draft-form-full">
-                            <span>Reference Answer</span>
-                            <textarea
-                              onChange={(event) =>
-                                updateDraftQuestion(question.draft_id, (previous) => ({
-                                  ...previous,
-                                  reference_answer: event.target.value,
-                                }))
-                              }
-                              rows={4}
-                              value={question.reference_answer}
-                            />
-                          </label>
-                        </div>
-                        {question.warnings.length > 0 ? (
-                          <p className="muted-copy">Warnings: {question.warnings.join(", ")}</p>
-                        ) : null}
-                      </section>
+                      <DraftQuestionCard
+                        index={index}
+                        key={question.draft_id}
+                        onQuestionChange={updateDraftQuestion}
+                        question={question}
+                      />
                     ))}
                   </div>
 
@@ -1561,142 +1778,27 @@ export default function App() {
         ) : null}
 
         {view === "interview" && session ? (
-          <section className="card interview-card">
-            <div className="section-heading">
-              <div>
-                <h2>{formatRole(config.role)}</h2>
-                <p className="muted-copy">
-                  Question {session.question_index + 1} of {session.question_limit}
-                </p>
-              </div>
-              <div className="status-cluster">
-                <span className="timer-chip">
-                  {formatSeconds(displayRemainingSeconds ?? session.remaining_seconds)}
-                </span>
-                <button className="ghost-button" disabled={busy} onClick={() => void finishInterview()}>
-                  Finish now
-                </button>
-              </div>
-            </div>
-
-            <article className="prompt-card">
-              <span className="prompt-tag">{formatPromptLabel(session.current_prompt.prompt_type)}</span>
-              <h3>{session.current_prompt.question_text}</h3>
-            </article>
-
-            <form className="answer-form" onSubmit={submitAnswer}>
-              <label htmlFor="answer-box">Your answer</label>
-              <textarea
-                id="answer-box"
-                value={answer}
-                onChange={(event) => setAnswer(event.target.value)}
-                placeholder="Type your answer here..."
-                rows={7}
-              />
-              <div className="voice-input-panel">
-                <div className="voice-input-header">
-                  <div>
-                    <strong>Voice input</strong>
-                    <p className="muted-copy">{voiceInputMessage}</p>
-                  </div>
-                  <button
-                    className="ghost-button"
-                    disabled={
-                      busy || voiceInputStatus === "unsupported" || voiceInputStatus === "stopping"
-                    }
-                    onClick={() =>
-                      voiceInputStatus === "listening" ? stopVoiceInput() : startVoiceInput()
-                    }
-                    type="button"
-                  >
-                    {voiceInputStatus === "listening"
-                      ? speechSettings.mode === "whisper"
-                        ? "Stop recording"
-                        : "Stop voice input"
-                      : speechSettings.mode === "whisper"
-                        ? "Start recording"
-                        : "Start voice input"}
-                  </button>
-                </div>
-                <div className="voice-language-row" role="group" aria-label="Voice input language">
-                  <span className="muted-copy">
-                    {speechSettings.mode === "whisper" ? "Language hint" : "Language"}
-                  </span>
-                  <div className="button-row">
-                    <button
-                      aria-pressed={voiceInputLanguage === "zh-CN"}
-                      className={`ghost-button ${
-                        voiceInputLanguage === "zh-CN" ? "voice-language-button active" : "voice-language-button"
-                      }`}
-                      disabled={voiceInputStatus === "listening" || voiceInputStatus === "stopping"}
-                      onClick={() => setVoiceInputLanguage("zh-CN")}
-                      type="button"
-                    >
-                      中文
-                    </button>
-                    <button
-                      aria-pressed={voiceInputLanguage === "en-US"}
-                      className={`ghost-button ${
-                        voiceInputLanguage === "en-US" ? "voice-language-button active" : "voice-language-button"
-                      }`}
-                      disabled={voiceInputStatus === "listening" || voiceInputStatus === "stopping"}
-                      onClick={() => setVoiceInputLanguage("en-US")}
-                      type="button"
-                    >
-                      English
-                    </button>
-                  </div>
-                </div>
-                <div className="voice-input-meta">
-                  <span className={`voice-status-chip ${voiceInputStatus}`}>
-                    {voiceInputStatus === "unsupported"
-                      ? "Unavailable"
-                      : voiceInputStatus === "listening"
-                        ? "Listening..."
-                        : voiceInputStatus === "stopping"
-                          ? "Processing..."
-                          : voiceInputStatus === "error"
-                            ? "Retry available"
-                            : "Ready"}
-                  </span>
-                  {interimTranscript ? (
-                    <p className="voice-preview">
-                      Preview: <span>{interimTranscript}</span>
-                    </p>
-                  ) : null}
-                </div>
-              </div>
-              <div className="answer-actions">
-                <span className="muted-copy">Be concise, but cover missing details clearly.</span>
-                <button
-                  className="action-button"
-                  disabled={
-                    busy ||
-                    voiceInputStatus === "listening" ||
-                    voiceInputStatus === "stopping" ||
-                    !answer.trim()
-                  }
-                  type="submit"
-                >
-                  {busy ? "Submitting..." : "Submit Answer"}
-                </button>
-              </div>
-            </form>
-
-            <section>
-              <div className="section-heading">
-                <h3>Conversation</h3>
-              </div>
-              <ul className="transcript-list">
-                {transcript.map((turn, index) => (
-                  <li key={`${turn.kind}-${index}`} className={`transcript-item ${turn.speaker}`}>
-                    <span>{turn.speaker === "agent" ? "Agent" : "You"}</span>
-                    <p>{turn.text}</p>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          </section>
+          <InterviewView
+            answer={answer}
+            busy={busy}
+            configRole={config.role}
+            displayRemainingSeconds={displayRemainingSeconds}
+            interimTranscript={interimTranscript}
+            onAnswerChange={setAnswer}
+            onFinishInterview={() => void finishInterview()}
+            onStartVoiceInput={() => {
+              void startVoiceInput();
+            }}
+            onStopVoiceInput={() => stopVoiceInput()}
+            onSubmitAnswer={submitAnswer}
+            onVoiceLanguageChange={setVoiceInputLanguage}
+            session={session}
+            speechMode={speechSettings.mode}
+            transcript={transcript}
+            voiceInputLanguage={voiceInputLanguage}
+            voiceInputMessage={voiceInputMessage}
+            voiceInputStatus={voiceInputStatus}
+          />
         ) : null}
 
         {view === "report" && report ? (
@@ -1714,7 +1816,7 @@ export default function App() {
             <div className="report-hero">
               <div>
                 <p className="eyebrow">Total score</p>
-                <h3>{scoreLabel}</h3>
+                <h3>{`${report.total_score} / 100`}</h3>
               </div>
               <p>{report.summary}</p>
             </div>
